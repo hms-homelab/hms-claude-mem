@@ -14,28 +14,24 @@ std::string getEnv(const char* name, const std::string& fallback) {
 } // namespace
 
 int main() {
-    // Config from environment (with sensible defaults)
     std::string redis_host = getEnv("REDIS_HOST", "127.0.0.1");
     int redis_port = std::stoi(getEnv("REDIS_PORT", "6379"));
-    std::string ollama_host = getEnv("OLLAMA_HOST", "http://192.168.2.5:11434");
+    std::string ollama_host = getEnv("OLLAMA_HOST", "http://localhost:11434");
     std::string embed_model = getEnv("EMBED_MODEL", "nomic-embed-text");
+    std::string ns = getEnv("NAMESPACE", "default");
+    double decay_rate = std::stod(getEnv("DECAY_RATE", "0.01"));
 
-    // Connect to Redis
-    RedisClient redis(redis_host, redis_port);
+    RedisClient redis(redis_host, redis_port, ns);
     if (!redis.connect()) {
         std::cerr << "Failed to connect to Redis at "
                   << redis_host << ":" << redis_port << "\n";
         return 1;
     }
 
-    // Init embedding client
     EmbeddingClient embedder(ollama_host, embed_model);
-
-    // Create tools and server
-    MemoryTools tools(redis, embedder);
+    MemoryTools tools(redis, embedder, decay_rate);
     McpServer server(tools);
 
-    // Run stdio MCP loop
     server.run();
 
     return 0;

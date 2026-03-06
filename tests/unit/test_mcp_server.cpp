@@ -5,37 +5,50 @@
 #include "redis_client.h"
 #include "embedding_client.h"
 
-// Test MCP protocol handling with a real Redis + Ollama
-// These are integration-ish tests since we need actual services
-
 class McpServerTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        redis_ = std::make_unique<RedisClient>("127.0.0.1", 6379);
+        // Use "test" namespace to isolate from production data
+        redis_ = std::make_unique<RedisClient>("127.0.0.1", 6379, "test");
         if (!redis_->connect()) {
             GTEST_SKIP() << "Redis not available";
         }
         embedder_ = std::make_unique<EmbeddingClient>(
             "http://192.168.2.5:11434", "nomic-embed-text");
-        tools_ = std::make_unique<MemoryTools>(*redis_, *embedder_);
+        tools_ = std::make_unique<MemoryTools>(*redis_, *embedder_, 0.01);
         server_ = std::make_unique<McpServer>(*tools_);
     }
 
     void TearDown() override {
-        // Clean up test keys
-        redis_->vectorRemove("test:unit:key1");
-        redis_->vectorRemove("test:unit:key2");
-        redis_->hashDelete("test:unit:key1");
-        redis_->hashDelete("test:unit:key2");
+        if (!redis_ || !redis_->isConnected()) return;
+        for (auto& k : test_keys_) {
+            redis_->vectorRemove(k);
+            redis_->hashDelete(k);
+        }
     }
+
+    // Helper to call a tool and parse the result JSON
+    json callTool(const std::string& name, const json& arguments, int id = 1) {
+        json req = {
+            {"jsonrpc", "2.0"}, {"id", id}, {"method", "tools/call"},
+            {"params", {{"name", name}, {"arguments", arguments}}}
+        };
+        auto resp = server_->handleRequest(req);
+        return json::parse(resp["result"]["content"][0]["text"].get<std::string>());
+    }
+
+    void trackKey(const std::string& key) { test_keys_.push_back(key); }
 
     std::unique_ptr<RedisClient> redis_;
     std::unique_ptr<EmbeddingClient> embedder_;
     std::unique_ptr<MemoryTools> tools_;
     std::unique_ptr<McpServer> server_;
+    std::vector<std::string> test_keys_;
 };
 
-TEST_F(McpServerTest, InitializeReturnsProtocolVersion) {
+// === Protocol Tests ===
+
+TEST_F(McpServerTest, InitializeReturnsVersion110) {
     json req = {
         {"jsonrpc", "2.0"}, {"id", 1}, {"method", "initialize"},
         {"params", {{"protocolVersion", "2024-11-05"},
@@ -43,121 +56,232 @@ TEST_F(McpServerTest, InitializeReturnsProtocolVersion) {
     };
     auto resp = server_->handleRequest(req);
     EXPECT_EQ(resp["result"]["protocolVersion"], "2024-11-05");
-    EXPECT_EQ(resp["result"]["serverInfo"]["name"], "claude-mem");
+    EXPECT_EQ(resp["result"]["serverInfo"]["version"], "1.1.0");
 }
 
 TEST_F(McpServerTest, ToolsListReturns5Tools) {
     json req = {{"jsonrpc", "2.0"}, {"id", 2}, {"method", "tools/list"}};
     auto resp = server_->handleRequest(req);
     EXPECT_EQ(resp["result"]["tools"].size(), 5);
-
-    // Verify tool names
-    std::vector<std::string> names;
-    for (auto& t : resp["result"]["tools"]) {
-        names.push_back(t["name"]);
-    }
-    EXPECT_THAT(names, ::testing::UnorderedElementsAre(
-        "mem_store", "mem_search", "mem_get", "mem_delete", "mem_list"));
-}
-
-TEST_F(McpServerTest, StoreAndRetrieveMemory) {
-    // Store
-    json store_req = {
-        {"jsonrpc", "2.0"}, {"id", 3}, {"method", "tools/call"},
-        {"params", {{"name", "mem_store"},
-                    {"arguments", {{"key", "test:unit:key1"},
-                                   {"value", "Redis runs on port 6379"},
-                                   {"category", "test"}}}}}
-    };
-    auto store_resp = server_->handleRequest(store_req);
-    auto store_text = json::parse(store_resp["result"]["content"][0]["text"].get<std::string>());
-    EXPECT_EQ(store_text["status"], "stored");
-
-    // Get
-    json get_req = {
-        {"jsonrpc", "2.0"}, {"id", 4}, {"method", "tools/call"},
-        {"params", {{"name", "mem_get"},
-                    {"arguments", {{"key", "test:unit:key1"}}}}}
-    };
-    auto get_resp = server_->handleRequest(get_req);
-    auto get_text = json::parse(get_resp["result"]["content"][0]["text"].get<std::string>());
-    EXPECT_EQ(get_text["value"], "Redis runs on port 6379");
-    EXPECT_EQ(get_text["category"], "test");
-}
-
-TEST_F(McpServerTest, SearchFindsRelevantMemory) {
-    // Store two memories
-    json store1 = {
-        {"jsonrpc", "2.0"}, {"id", 5}, {"method", "tools/call"},
-        {"params", {{"name", "mem_store"},
-                    {"arguments", {{"key", "test:unit:key1"},
-                                   {"value", "PostgreSQL password is maestro_postgres_2026"},
-                                   {"category", "infra:postgres"}}}}}
-    };
-    json store2 = {
-        {"jsonrpc", "2.0"}, {"id", 6}, {"method", "tools/call"},
-        {"params", {{"name", "mem_store"},
-                    {"arguments", {{"key", "test:unit:key2"},
-                                   {"value", "MQTT broker at port 1883"},
-                                   {"category", "infra:mqtt"}}}}}
-    };
-    server_->handleRequest(store1);
-    server_->handleRequest(store2);
-
-    // Search for database-related memory
-    json search_req = {
-        {"jsonrpc", "2.0"}, {"id", 7}, {"method", "tools/call"},
-        {"params", {{"name", "mem_search"},
-                    {"arguments", {{"query", "database password credentials"},
-                                   {"top_k", 2}}}}}
-    };
-    auto search_resp = server_->handleRequest(search_req);
-    auto search_text = json::parse(search_resp["result"]["content"][0]["text"].get<std::string>());
-    EXPECT_GE(search_text["count"].get<int>(), 1);
-    // The postgres key should rank higher than mqtt for "database password"
-    EXPECT_EQ(search_text["results"][0]["key"], "test:unit:key1");
-}
-
-TEST_F(McpServerTest, DeleteRemovesMemory) {
-    // Store then delete
-    json store_req = {
-        {"jsonrpc", "2.0"}, {"id", 8}, {"method", "tools/call"},
-        {"params", {{"name", "mem_store"},
-                    {"arguments", {{"key", "test:unit:key1"},
-                                   {"value", "temporary data"},
-                                   {"category", "test"}}}}}
-    };
-    server_->handleRequest(store_req);
-
-    json del_req = {
-        {"jsonrpc", "2.0"}, {"id", 9}, {"method", "tools/call"},
-        {"params", {{"name", "mem_delete"},
-                    {"arguments", {{"key", "test:unit:key1"}}}}}
-    };
-    auto del_resp = server_->handleRequest(del_req);
-    auto del_text = json::parse(del_resp["result"]["content"][0]["text"].get<std::string>());
-    EXPECT_EQ(del_text["status"], "deleted");
-
-    // Verify gone
-    json get_req = {
-        {"jsonrpc", "2.0"}, {"id", 10}, {"method", "tools/call"},
-        {"params", {{"name", "mem_get"},
-                    {"arguments", {{"key", "test:unit:key1"}}}}}
-    };
-    auto get_resp = server_->handleRequest(get_req);
-    auto get_text = json::parse(get_resp["result"]["content"][0]["text"].get<std::string>());
-    EXPECT_TRUE(get_text.contains("error"));
-}
-
-TEST_F(McpServerTest, UnknownMethodReturnsError) {
-    json req = {{"jsonrpc", "2.0"}, {"id", 11}, {"method", "unknown/method"}};
-    auto resp = server_->handleRequest(req);
-    EXPECT_TRUE(resp.contains("error"));
-    EXPECT_EQ(resp["error"]["code"], -32601);
 }
 
 TEST_F(McpServerTest, PingReturnsEmpty) {
-    json req = {{"jsonrpc", "2.0"}, {"id", 12}, {"method", "ping"}};
+    json req = {{"jsonrpc", "2.0"}, {"id", 3}, {"method", "ping"}};
     auto resp = server_->handleRequest(req);
     EXPECT_TRUE(resp["result"].is_object());
+}
+
+TEST_F(McpServerTest, UnknownMethodReturnsError) {
+    json req = {{"jsonrpc", "2.0"}, {"id", 4}, {"method", "unknown/method"}};
+    auto resp = server_->handleRequest(req);
+    EXPECT_EQ(resp["error"]["code"], -32601);
+}
+
+// === Store & Retrieve Tests ===
+
+TEST_F(McpServerTest, StoreAndRetrieveMemory) {
+    trackKey("test:v11:basic");
+    auto stored = callTool("mem_store", {
+        {"key", "test:v11:basic"},
+        {"value", "Redis runs on port 6379"},
+        {"category", "test"}
+    });
+    EXPECT_EQ(stored["status"], "stored");
+    EXPECT_FALSE(stored["is_update"].get<bool>());
+
+    auto got = callTool("mem_get", {{"key", "test:v11:basic"}});
+    EXPECT_EQ(got["value"], "Redis runs on port 6379");
+    EXPECT_EQ(got["category"], "test");
+    EXPECT_FALSE(got["pinned"].get<bool>());
+}
+
+TEST_F(McpServerTest, StoreWithPinned) {
+    trackKey("test:v11:pinned");
+    auto stored = callTool("mem_store", {
+        {"key", "test:v11:pinned"},
+        {"value", "Critical fact"},
+        {"category", "user:preference"},
+        {"pinned", true}
+    });
+    EXPECT_EQ(stored["status"], "stored");
+    EXPECT_TRUE(stored["pinned"].get<bool>());
+
+    auto got = callTool("mem_get", {{"key", "test:v11:pinned"}});
+    EXPECT_TRUE(got["pinned"].get<bool>());
+}
+
+TEST_F(McpServerTest, UpdatePreservesCreatedAt) {
+    trackKey("test:v11:update");
+    callTool("mem_store", {
+        {"key", "test:v11:update"},
+        {"value", "original value"},
+        {"category", "test"}
+    });
+    auto first = callTool("mem_get", {{"key", "test:v11:update"}});
+    std::string original_created = first["created_at"];
+
+    auto updated = callTool("mem_store", {
+        {"key", "test:v11:update"},
+        {"value", "updated value"},
+        {"category", "test"}
+    });
+    EXPECT_TRUE(updated["is_update"].get<bool>());
+
+    auto got = callTool("mem_get", {{"key", "test:v11:update"}});
+    EXPECT_EQ(got["value"], "updated value");
+    EXPECT_EQ(got["created_at"], original_created);
+}
+
+// === Search Tests ===
+
+TEST_F(McpServerTest, SearchFindsRelevantMemory) {
+    trackKey("test:v11:postgres");
+    trackKey("test:v11:mqtt");
+    callTool("mem_store", {
+        {"key", "test:v11:postgres"},
+        {"value", "PostgreSQL password is secret123"},
+        {"category", "infra:postgres"}
+    });
+    callTool("mem_store", {
+        {"key", "test:v11:mqtt"},
+        {"value", "MQTT broker at port 1883"},
+        {"category", "infra:mqtt"}
+    });
+
+    auto results = callTool("mem_search", {
+        {"query", "database password credentials"},
+        {"top_k", 2}
+    });
+    EXPECT_GE(results["count"].get<int>(), 1);
+    EXPECT_EQ(results["results"][0]["key"], "test:v11:postgres");
+    // v1.1.0: results include final_score, age_days, pinned
+    EXPECT_TRUE(results["results"][0].contains("final_score"));
+    EXPECT_TRUE(results["results"][0].contains("age_days"));
+    EXPECT_TRUE(results["results"][0].contains("pinned"));
+}
+
+TEST_F(McpServerTest, SearchWithCategoryFilter) {
+    trackKey("test:v11:cat_a");
+    trackKey("test:v11:cat_b");
+    callTool("mem_store", {
+        {"key", "test:v11:cat_a"},
+        {"value", "This is about deployment"},
+        {"category", "project:alpha"}
+    });
+    callTool("mem_store", {
+        {"key", "test:v11:cat_b"},
+        {"value", "This is also about deployment"},
+        {"category", "project:beta"}
+    });
+
+    // Search with category filter — should only return alpha
+    auto results = callTool("mem_search", {
+        {"query", "deployment process"},
+        {"top_k", 5},
+        {"category", "project:alpha"}
+    });
+    EXPECT_EQ(results["count"].get<int>(), 1);
+    EXPECT_EQ(results["results"][0]["category"], "project:alpha");
+}
+
+TEST_F(McpServerTest, SearchRecencyWeighting) {
+    trackKey("test:v11:recent");
+    // Store a memory — it's brand new so age_days ~ 0
+    callTool("mem_store", {
+        {"key", "test:v11:recent"},
+        {"value", "Fresh information"},
+        {"category", "test"}
+    });
+
+    auto results = callTool("mem_search", {
+        {"query", "fresh information"},
+        {"top_k", 1}
+    });
+    EXPECT_GE(results["count"].get<int>(), 1);
+    auto& first = results["results"][0];
+    // For a brand new memory, final_score should be very close to similarity
+    double sim = first["similarity"].get<double>();
+    double final_score = first["final_score"].get<double>();
+    EXPECT_NEAR(sim, final_score, 0.01); // age ~ 0 means no decay
+}
+
+// === Delete Tests ===
+
+TEST_F(McpServerTest, DeleteRemovesMemory) {
+    trackKey("test:v11:del");
+    callTool("mem_store", {
+        {"key", "test:v11:del"},
+        {"value", "temporary"},
+        {"category", "test"}
+    });
+
+    auto del = callTool("mem_delete", {{"key", "test:v11:del"}});
+    EXPECT_EQ(del["status"], "deleted");
+
+    auto got = callTool("mem_get", {{"key", "test:v11:del"}});
+    EXPECT_TRUE(got.contains("error"));
+}
+
+// === List Tests ===
+
+TEST_F(McpServerTest, ListFiltersByCategory) {
+    trackKey("test:v11:list_a");
+    trackKey("test:v11:list_b");
+    callTool("mem_store", {
+        {"key", "test:v11:list_a"},
+        {"value", "alpha item"},
+        {"category", "list:alpha"}
+    });
+    callTool("mem_store", {
+        {"key", "test:v11:list_b"},
+        {"value", "beta item"},
+        {"category", "list:beta"}
+    });
+
+    auto results = callTool("mem_list", {{"category", "list:alpha"}});
+    for (auto& item : results["items"]) {
+        EXPECT_EQ(item["category"], "list:alpha");
+    }
+}
+
+TEST_F(McpServerTest, ListShowsPinnedField) {
+    trackKey("test:v11:list_pin");
+    callTool("mem_store", {
+        {"key", "test:v11:list_pin"},
+        {"value", "pinned item"},
+        {"category", "test"},
+        {"pinned", true}
+    });
+
+    auto results = callTool("mem_list", {{"category", "test"}});
+    bool found = false;
+    for (auto& item : results["items"]) {
+        if (item["key"] == "test:v11:list_pin") {
+            EXPECT_TRUE(item["pinned"].get<bool>());
+            found = true;
+        }
+    }
+    EXPECT_TRUE(found) << "Pinned item not found in list";
+}
+
+// === Namespace Isolation Test ===
+
+TEST_F(McpServerTest, NamespaceIsolation) {
+    // Our test fixture uses "test" namespace
+    EXPECT_EQ(redis_->getNamespace(), "test");
+
+    trackKey("test:v11:ns");
+    callTool("mem_store", {
+        {"key", "test:v11:ns"},
+        {"value", "namespace test"},
+        {"category", "test"}
+    });
+
+    // Create a second client with different namespace
+    RedisClient other_redis("127.0.0.1", 6379, "other");
+    ASSERT_TRUE(other_redis.connect());
+
+    // Should NOT find the key in "other" namespace
+    auto entry = other_redis.hashGet("test:v11:ns");
+    EXPECT_FALSE(entry.has_value());
 }

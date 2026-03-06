@@ -3,13 +3,25 @@
 #include <sstream>
 #include <cstring>
 
-RedisClient::RedisClient(const std::string& host, int port)
-    : host_(host), port_(port), ctx_(nullptr) {}
+RedisClient::RedisClient(const std::string& host, int port, const std::string& ns)
+    : host_(host), port_(port), namespace_(ns), ctx_(nullptr) {}
 
 RedisClient::~RedisClient() {
     if (ctx_) {
         redisFree(static_cast<redisContext*>(ctx_));
     }
+}
+
+std::string RedisClient::vectorKey() const {
+    return "claude:mem:" + namespace_ + ":vectors";
+}
+
+std::string RedisClient::dataKey(const std::string& key) const {
+    return "claude:mem:" + namespace_ + ":data:" + key;
+}
+
+std::string RedisClient::dataPrefix() const {
+    return "claude:mem:" + namespace_ + ":data:";
 }
 
 bool RedisClient::connect() {
@@ -34,9 +46,8 @@ bool RedisClient::vectorAdd(const std::string& key, const std::vector<float>& em
     auto* c = static_cast<redisContext*>(ctx_);
     if (!c) return false;
 
-    // Build command: VADD claude:mem:vectors VALUES <dim> <v1> <v2> ... <element>
+    std::string vkey = vectorKey();
     int dim = static_cast<int>(embedding.size());
-    // argc = 1(VADD) + 1(key) + 1(VALUES) + 1(dim) + dim(floats) + 1(element) = dim + 5
     int argc = dim + 5;
     std::vector<const char*> argv(argc);
     std::vector<size_t> argvlen(argc);
@@ -44,7 +55,7 @@ bool RedisClient::vectorAdd(const std::string& key, const std::vector<float>& em
     str_args.reserve(argc);
 
     str_args.push_back("VADD");
-    str_args.push_back(VECTOR_KEY);
+    str_args.push_back(vkey);
     str_args.push_back("VALUES");
     str_args.push_back(std::to_string(dim));
     for (float v : embedding) {
@@ -70,8 +81,9 @@ bool RedisClient::vectorRemove(const std::string& key) {
     auto* c = static_cast<redisContext*>(ctx_);
     if (!c) return false;
 
+    std::string vkey = vectorKey();
     auto* reply = static_cast<redisReply*>(
-        redisCommand(c, "VREM %s %s", VECTOR_KEY, key.c_str()));
+        redisCommand(c, "VREM %s %s", vkey.c_str(), key.c_str()));
     if (!reply) return false;
 
     bool ok = (reply->type != REDIS_REPLY_ERROR);
@@ -86,16 +98,16 @@ std::vector<std::pair<std::string, double>> RedisClient::vectorSearch(
     std::vector<std::pair<std::string, double>> results;
     if (!c) return results;
 
+    std::string vkey = vectorKey();
     int dim = static_cast<int>(query.size());
-    // VSIM claude:mem:vectors VALUES <dim> <v1...> COUNT <k> WITHSCORES
-    int argc = dim + 7; // VSIM key VALUES dim floats... COUNT k WITHSCORES
+    int argc = dim + 7;
     std::vector<const char*> argv(argc);
     std::vector<size_t> argvlen(argc);
     std::vector<std::string> str_args;
     str_args.reserve(argc);
 
     str_args.push_back("VSIM");
-    str_args.push_back(VECTOR_KEY);
+    str_args.push_back(vkey);
     str_args.push_back("VALUES");
     str_args.push_back(std::to_string(dim));
     for (float v : query) {
@@ -117,7 +129,6 @@ std::vector<std::pair<std::string, double>> RedisClient::vectorSearch(
         return results;
     }
 
-    // Results come as: [key1, score1, key2, score2, ...]
     for (size_t i = 0; i + 1 < reply->elements; i += 2) {
         std::string k(reply->element[i]->str, reply->element[i]->len);
         double score = std::stod(
@@ -133,11 +144,13 @@ bool RedisClient::hashSet(const std::string& key, const MemoryEntry& entry) {
     auto* c = static_cast<redisContext*>(ctx_);
     if (!c) return false;
 
-    std::string hkey = DATA_PREFIX + key;
+    std::string hkey = dataKey(key);
+    std::string pinned_str = entry.pinned ? "1" : "0";
     auto* reply = static_cast<redisReply*>(
-        redisCommand(c, "HSET %s value %s category %s created_at %s updated_at %s",
+        redisCommand(c, "HSET %s value %s category %s created_at %s updated_at %s pinned %s",
                      hkey.c_str(), entry.value.c_str(), entry.category.c_str(),
-                     entry.created_at.c_str(), entry.updated_at.c_str()));
+                     entry.created_at.c_str(), entry.updated_at.c_str(),
+                     pinned_str.c_str()));
     if (!reply) return false;
 
     bool ok = (reply->type != REDIS_REPLY_ERROR);
@@ -149,7 +162,7 @@ std::optional<MemoryEntry> RedisClient::hashGet(const std::string& key) {
     auto* c = static_cast<redisContext*>(ctx_);
     if (!c) return std::nullopt;
 
-    std::string hkey = DATA_PREFIX + key;
+    std::string hkey = dataKey(key);
     auto* reply = static_cast<redisReply*>(
         redisCommand(c, "HGETALL %s", hkey.c_str()));
     if (!reply || reply->type != REDIS_REPLY_ARRAY || reply->elements == 0) {
@@ -166,6 +179,7 @@ std::optional<MemoryEntry> RedisClient::hashGet(const std::string& key) {
         else if (field == "category") entry.category = val;
         else if (field == "created_at") entry.created_at = val;
         else if (field == "updated_at") entry.updated_at = val;
+        else if (field == "pinned") entry.pinned = (val == "1");
     }
 
     freeReplyObject(reply);
@@ -176,7 +190,7 @@ bool RedisClient::hashDelete(const std::string& key) {
     auto* c = static_cast<redisContext*>(ctx_);
     if (!c) return false;
 
-    std::string hkey = DATA_PREFIX + key;
+    std::string hkey = dataKey(key);
     auto* reply = static_cast<redisReply*>(
         redisCommand(c, "DEL %s", hkey.c_str()));
     if (!reply) return false;
@@ -192,7 +206,8 @@ std::vector<std::string> RedisClient::scanKeys(const std::string& pattern, int c
     if (!c) return keys;
 
     std::string cursor = "0";
-    std::string full_pattern = DATA_PREFIX + pattern;
+    std::string prefix = dataPrefix();
+    std::string full_pattern = prefix + pattern;
 
     do {
         auto* reply = static_cast<redisReply*>(
@@ -208,9 +223,8 @@ std::vector<std::string> RedisClient::scanKeys(const std::string& pattern, int c
         auto* arr = reply->element[1];
         for (size_t i = 0; i < arr->elements; i++) {
             std::string k(arr->element[i]->str, arr->element[i]->len);
-            // Strip DATA_PREFIX
-            if (k.size() > strlen(DATA_PREFIX)) {
-                keys.push_back(k.substr(strlen(DATA_PREFIX)));
+            if (k.size() > prefix.size()) {
+                keys.push_back(k.substr(prefix.size()));
             }
         }
         freeReplyObject(reply);

@@ -10,6 +10,7 @@ struct MemoryEntry {
     std::string category;
     std::string created_at;
     std::string updated_at;
+    bool pinned = false;
 };
 
 struct SearchResult {
@@ -21,7 +22,8 @@ struct SearchResult {
 
 class RedisClient {
 public:
-    RedisClient(const std::string& host = "127.0.0.1", int port = 6379);
+    RedisClient(const std::string& host = "127.0.0.1", int port = 6379,
+                const std::string& ns = "default");
     ~RedisClient();
 
     bool connect();
@@ -39,11 +41,15 @@ public:
     bool hashDelete(const std::string& key);
     std::vector<std::string> scanKeys(const std::string& pattern, int count);
 
+    const std::string& getNamespace() const { return namespace_; }
+
 private:
-    static constexpr const char* VECTOR_KEY = "claude:mem:vectors";
-    static constexpr const char* DATA_PREFIX = "claude:mem:data:";
+    std::string vectorKey() const;
+    std::string dataKey(const std::string& key) const;
+    std::string dataPrefix() const;
 
     std::string host_;
     int port_;
+    std::string namespace_;
     void* ctx_; // redisContext*
 };
