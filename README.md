@@ -109,9 +109,11 @@ Environment variables with sensible defaults:
 
 ## Register with Claude Code
 
-Add to `.mcp.json` in your project root:
+### Project-Scoped (recommended starting point)
 
-**With Ollama (default):**
+Add to `.mcp.json` in your project root. Memories are isolated to this project:
+
+**Ollama (local, free):**
 ```json
 {
   "mcpServers": {
@@ -119,15 +121,21 @@ Add to `.mcp.json` in your project root:
       "command": "/path/to/build/hms_claude_mem",
       "args": [],
       "env": {
+        "REDIS_HOST": "127.0.0.1",
+        "REDIS_PORT": "6379",
+        "EMBED_PROVIDER": "ollama",
         "EMBED_HOST": "http://localhost:11434",
-        "NAMESPACE": "my-project"
+        "EMBED_MODEL": "nomic-embed-text",
+        "EMBED_API_KEY": "",
+        "NAMESPACE": "my-project",
+        "DECAY_RATE": "0.01"
       }
     }
   }
 }
 ```
 
-**With OpenAI:**
+**OpenAI / OpenAI-compatible (vLLM, LiteLLM, LocalAI, etc.):**
 ```json
 {
   "mcpServers": {
@@ -135,17 +143,70 @@ Add to `.mcp.json` in your project root:
       "command": "/path/to/build/hms_claude_mem",
       "args": [],
       "env": {
+        "REDIS_HOST": "127.0.0.1",
+        "REDIS_PORT": "6379",
         "EMBED_PROVIDER": "openai",
         "EMBED_HOST": "https://api.openai.com",
         "EMBED_MODEL": "text-embedding-3-small",
-        "EMBED_API_KEY": "sk-..."
+        "EMBED_API_KEY": "sk-...",
+        "NAMESPACE": "my-project",
+        "DECAY_RATE": "0.01"
       }
     }
   }
 }
 ```
 
-Restart Claude Code to pick up the new MCP server.
+### Global (all sessions, all projects)
+
+Add to `~/.claude/settings.json` so Claude remembers across every project:
+
+```json
+{
+  "mcpServers": {
+    "claude-mem": {
+      "command": "/path/to/build/hms_claude_mem",
+      "args": [],
+      "env": {
+        "REDIS_HOST": "127.0.0.1",
+        "REDIS_PORT": "6379",
+        "EMBED_PROVIDER": "ollama",
+        "EMBED_HOST": "http://localhost:11434",
+        "EMBED_MODEL": "nomic-embed-text",
+        "NAMESPACE": "global",
+        "DECAY_RATE": "0.01"
+      }
+    }
+  }
+}
+```
+
+### Docker as MCP Server
+
+If you built or pulled the Docker image, point Claude Code at it:
+
+```json
+{
+  "mcpServers": {
+    "claude-mem": {
+      "command": "docker",
+      "args": ["run", "--rm", "-i",
+        "-e", "REDIS_HOST=host.docker.internal",
+        "-e", "EMBED_HOST=http://host.docker.internal:11434",
+        "-e", "NAMESPACE=my-project",
+        "ghcr.io/hms-homelab/hms-claude-mem:latest"
+      ]
+    }
+  }
+}
+```
+
+### Notes
+
+- **Namespace isolation:** Different `NAMESPACE` values create fully separate memory pools. A project `.mcp.json` overrides `~/.claude/settings.json` when both exist.
+- **Minimal config:** Only `NAMESPACE` and `EMBED_HOST` are typically needed — everything else has sensible defaults.
+- **Restart required:** Claude Code must be restarted after changing MCP configuration.
+- **Remote Redis:** Set `REDIS_HOST` to your Redis server IP for shared memory across machines.
 
 ## Docker
 
