@@ -1,5 +1,7 @@
 # hms-claude-mem
 
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-%23FFDD00.svg?logo=buy-me-a-coffee)](https://www.buymeacoffee.com/aamat09)
+
 Persistent semantic memory for Claude Code via Redis 8 vectorsets. A C++ MCP server that gives Claude the ability to store, search, and retrieve context across sessions — surgically, on-demand, without bloating the context window.
 
 ## The Problem
@@ -162,6 +164,10 @@ hms-claude-mem/
 └── .github/workflows/
     └── docker-build.yml    # CI: build, test, push to GHCR
 ```
+
+## Support
+
+[![Buy Me A Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/aamat09)
 
 ## License
 
