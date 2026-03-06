@@ -39,7 +39,7 @@ What gets **embedded** is `"{category}: {key}"`, not the value. Keys should be d
 ```
 key:      "hms-cpap deploy process to raspberry pi"
 category: "project:hms-cpap"
-value:    "Pi at 192.168.2.73. ALWAYS use ./deploy_to_pi.sh ..."
+value:    "Use ./deploy_to_pi.sh for ARM build + deploy ..."
 ```
 
 Searching for "how do I push code to the Pi" will find this memory via cosine similarity, even though the words don't match.
