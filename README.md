@@ -23,8 +23,8 @@ Claude Code  <──stdio JSON-RPC──>  hms_claude_mem (C++ binary)
                                         │    ├── VADD/VSIM  → semantic vector search
                                         │    └── HSET/HGET  → key-value storage
                                         │
-                                        └── Ollama
-                                             └── nomic-embed-text (768-dim embeddings)
+                                        └── Embedding Provider (Ollama, OpenAI, vLLM, etc.)
+                                             └── nomic-embed-text / text-embedding-3-small / etc.
 ```
 
 ## How It Works
@@ -57,7 +57,7 @@ Searching for "how do I push code to the Pi" will find this memory via cosine si
 ## Prerequisites
 
 - **Redis 8+** with vectorset module (built-in since Redis 8.0)
-- **Ollama** with `nomic-embed-text` model
+- **Any embedding provider**: Ollama, OpenAI, vLLM, LiteLLM, LocalAI, or anything OpenAI-compatible
 - **C++17** compiler
 - **libhiredis-dev**, **libcurl4-openssl-dev**, **nlohmann-json3-dev**
 
@@ -65,8 +65,14 @@ Searching for "how do I push code to the Pi" will find this memory via cosine si
 # Install dependencies (Debian/Ubuntu)
 sudo apt install -y libhiredis-dev libcurl4-openssl-dev nlohmann-json3-dev
 
-# Ensure Ollama has the embedding model
+# Option A: Ollama (local, free)
 ollama pull nomic-embed-text
+
+# Option B: OpenAI-compatible (any provider)
+export EMBED_PROVIDER=openai
+export EMBED_HOST=https://api.openai.com
+export EMBED_MODEL=text-embedding-3-small
+export EMBED_API_KEY=sk-...
 ```
 
 ## Build
@@ -79,7 +85,7 @@ make -j$(nproc)
 
 ## Test
 
-7 integration tests (require Redis + Ollama running):
+14 integration tests (require Redis + embedding provider running):
 
 ```bash
 cd build
@@ -94,13 +100,18 @@ Environment variables with sensible defaults:
 |----------|---------|-------------|
 | `REDIS_HOST` | `127.0.0.1` | Redis server address |
 | `REDIS_PORT` | `6379` | Redis server port |
-| `OLLAMA_HOST` | `http://localhost:11434` | Ollama API endpoint |
+| `NAMESPACE` | `default` | Memory namespace (isolates per project/user) |
+| `EMBED_PROVIDER` | `ollama` | Embedding provider: `ollama` or `openai` |
+| `EMBED_HOST` | `http://localhost:11434` | Embedding API endpoint (falls back to `OLLAMA_HOST`) |
 | `EMBED_MODEL` | `nomic-embed-text` | Embedding model name |
+| `EMBED_API_KEY` | *(empty)* | Bearer token for authenticated providers |
+| `DECAY_RATE` | `0.01` | Recency decay per day (0.01 = 1%/day, 0 = disabled) |
 
 ## Register with Claude Code
 
 Add to `.mcp.json` in your project root:
 
+**With Ollama (default):**
 ```json
 {
   "mcpServers": {
@@ -108,7 +119,26 @@ Add to `.mcp.json` in your project root:
       "command": "/path/to/build/hms_claude_mem",
       "args": [],
       "env": {
-        "OLLAMA_HOST": "http://localhost:11434"
+        "EMBED_HOST": "http://localhost:11434",
+        "NAMESPACE": "my-project"
+      }
+    }
+  }
+}
+```
+
+**With OpenAI:**
+```json
+{
+  "mcpServers": {
+    "claude-mem": {
+      "command": "/path/to/build/hms_claude_mem",
+      "args": [],
+      "env": {
+        "EMBED_PROVIDER": "openai",
+        "EMBED_HOST": "https://api.openai.com",
+        "EMBED_MODEL": "text-embedding-3-small",
+        "EMBED_API_KEY": "sk-..."
       }
     }
   }
@@ -157,10 +187,10 @@ hms-claude-mem/
 │   ├── main.cpp            # Env config, wiring, stdio loop
 │   ├── mcp_server.cpp/h    # JSON-RPC 2.0 MCP protocol handler
 │   ├── redis_client.cpp/h  # hiredis wrapper (VADD, VSIM, HSET, SCAN)
-│   ├── embedding_client.cpp/h  # Ollama HTTP client for embeddings
+│   ├── embedding_client.cpp/h  # Multi-provider embedding client (Ollama, OpenAI)
 │   └── tools.cpp/h         # Tool implementations (store, search, get, delete, list)
 ├── tests/unit/
-│   └── test_mcp_server.cpp # 7 integration tests
+│   └── test_mcp_server.cpp # 14 integration tests
 └── .github/workflows/
     └── docker-build.yml    # CI: build, test, push to GHCR
 ```

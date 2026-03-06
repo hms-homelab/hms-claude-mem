@@ -48,7 +48,7 @@ protected:
 
 // === Protocol Tests ===
 
-TEST_F(McpServerTest, InitializeReturnsVersion110) {
+TEST_F(McpServerTest, InitializeReturnsVersion120) {
     json req = {
         {"jsonrpc", "2.0"}, {"id", 1}, {"method", "initialize"},
         {"params", {{"protocolVersion", "2024-11-05"},
@@ -56,7 +56,7 @@ TEST_F(McpServerTest, InitializeReturnsVersion110) {
     };
     auto resp = server_->handleRequest(req);
     EXPECT_EQ(resp["result"]["protocolVersion"], "2024-11-05");
-    EXPECT_EQ(resp["result"]["serverInfo"]["version"], "1.1.0");
+    EXPECT_EQ(resp["result"]["serverInfo"]["version"], "1.2.0");
 }
 
 TEST_F(McpServerTest, ToolsListReturns5Tools) {
