@@ -21,8 +21,8 @@ RUN mkdir build && cd build \
 FROM debian:trixie-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libhiredis1.1.0t64 \
-    libcurl4t64 \
+    libhiredis-dev \
+    libcurl4-openssl-dev \
     && rm -rf /var/lib/apt/lists/* \
     && useradd -r -s /bin/false claude-mem
 
