@@ -7,8 +7,14 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Dependencies
 find_package(CURL REQUIRED)
-find_library(HIREDIS_LIB hiredis REQUIRED)
-find_path(HIREDIS_INCLUDE hiredis/hiredis.h REQUIRED)
+find_package(nlohmann_json CONFIG QUIET)
+
+# hiredis: prefer CONFIG mode (vcpkg/brew), fall back to find_library (apt)
+find_package(hiredis CONFIG QUIET)
+if(NOT hiredis_FOUND)
+    find_library(HIREDIS_LIB hiredis REQUIRED)
+    find_path(HIREDIS_INCLUDE hiredis/hiredis.h REQUIRED)
+endif()
 
 # Main binary
 file(GLOB SOURCES "src/*.cpp")
@@ -16,15 +22,25 @@ add_executable(hms_claude_mem ${SOURCES})
 
 target_include_directories(hms_claude_mem PRIVATE
     ${CMAKE_SOURCE_DIR}/src
-    ${HIREDIS_INCLUDE}
     ${CURL_INCLUDE_DIRS}
 )
 
-target_link_libraries(hms_claude_mem PRIVATE
-    ${HIREDIS_LIB}
-    ${CURL_LIBRARIES}
-    pthread
-)
+if(hiredis_FOUND)
+    target_link_libraries(hms_claude_mem PRIVATE hiredis::hiredis)
+else()
+    target_include_directories(hms_claude_mem PRIVATE ${HIREDIS_INCLUDE})
+    target_link_libraries(hms_claude_mem PRIVATE ${HIREDIS_LIB})
+endif()
+
+target_link_libraries(hms_claude_mem PRIVATE ${CURL_LIBRARIES})
+
+if(nlohmann_json_FOUND)
+    target_link_libraries(hms_claude_mem PRIVATE nlohmann_json::nlohmann_json)
+endif()
+
+if(NOT WIN32)
+    target_link_libraries(hms_claude_mem PRIVATE pthread)
+endif()
 
 install(TARGETS hms_claude_mem DESTINATION bin)
 
@@ -42,17 +58,26 @@ if(BUILD_TESTS)
     add_executable(run_tests ${TEST_SOURCES} ${LIB_SOURCES})
     target_include_directories(run_tests PRIVATE
         ${CMAKE_SOURCE_DIR}/src
-        ${HIREDIS_INCLUDE}
         ${CURL_INCLUDE_DIRS}
     )
     target_link_libraries(run_tests PRIVATE
         GTest::GTest
         GTest::Main
         gmock
-        ${HIREDIS_LIB}
         ${CURL_LIBRARIES}
-        pthread
     )
+    if(hiredis_FOUND)
+        target_link_libraries(run_tests PRIVATE hiredis::hiredis)
+    else()
+        target_include_directories(run_tests PRIVATE ${HIREDIS_INCLUDE})
+        target_link_libraries(run_tests PRIVATE ${HIREDIS_LIB})
+    endif()
+    if(nlohmann_json_FOUND)
+        target_link_libraries(run_tests PRIVATE nlohmann_json::nlohmann_json)
+    endif()
+    if(NOT WIN32)
+        target_link_libraries(run_tests PRIVATE pthread)
+    endif()
     add_test(NAME unit_tests COMMAND run_tests)
 endif()
 

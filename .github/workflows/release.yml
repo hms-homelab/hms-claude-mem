@@ -1,0 +1,176 @@
+name: Release Binaries
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.2.0) — used when dispatched manually'
+        required: true
+        default: 'v1.2.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux-amd64
+            artifact: hms_claude_mem-linux-amd64
+            binary: hms_claude_mem
+            archive: tar.gz
+          - os: windows-latest
+            name: windows-amd64
+            artifact: hms_claude_mem-windows-amd64.exe
+            binary: hms_claude_mem.exe
+            archive: zip
+          - os: macos-latest
+            name: macos-arm64
+            artifact: hms_claude_mem-macos-arm64
+            binary: hms_claude_mem
+            archive: tar.gz
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ------------------ Linux ------------------
+      - name: Install deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake \
+            libhiredis-dev libcurl4-openssl-dev nlohmann-json3-dev
+
+      - name: Configure (Linux)
+        if: runner.os == 'Linux'
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
+
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: cmake --build build -j$(nproc)
+
+      - name: Strip (Linux)
+        if: runner.os == 'Linux'
+        run: strip build/${{ matrix.binary }}
+
+      # ------------------ macOS ------------------
+      - name: Install deps (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install hiredis nlohmann-json
+          # curl is built into macOS
+
+      - name: Configure (macOS)
+        if: runner.os == 'macOS'
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
+
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        run: cmake --build build -j$(sysctl -n hw.ncpu)
+
+      - name: Strip (macOS)
+        if: runner.os == 'macOS'
+        run: strip build/${{ matrix.binary }}
+
+      # ------------------ Windows ------------------
+      - name: Install deps (Windows, vcpkg)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          vcpkg install hiredis:x64-windows curl:x64-windows nlohmann-json:x64-windows
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -S . -B build `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DBUILD_TESTS=OFF `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: cmake --build build --config Release -j
+
+      - name: Stage binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # MSVC puts the exe in build/Release/
+          Copy-Item "build/Release/hms_claude_mem.exe" "build/hms_claude_mem.exe"
+          # Also copy vcpkg runtime DLLs next to the binary
+          Copy-Item "build/Release/*.dll" "build/" -ErrorAction SilentlyContinue
+
+      # ------------------ Package ------------------
+      - name: Package (tar.gz)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp build/${{ matrix.binary }} dist/
+          cp README.md LICENSE VERSION dist/
+          tar -czf ${{ matrix.artifact }}.tar.gz -C dist .
+
+      - name: Package (zip)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item "build/hms_claude_mem.exe" "dist/"
+          Copy-Item "build/*.dll" "dist/" -ErrorAction SilentlyContinue
+          Copy-Item "README.md","LICENSE","VERSION" "dist/"
+          Compress-Archive -Path "dist/*" -DestinationPath "${{ matrix.artifact }}.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            ${{ matrix.artifact }}.tar.gz
+            ${{ matrix.artifact }}.zip
+          if-no-files-found: ignore
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p release
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec cp {} release/ \;
+          ls -lh release/
+
+      - name: Resolve release tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: ${{ steps.tag.outputs.name }}
+          generate_release_notes: true
+          files: release/*
