@@ -1,5 +1,10 @@
 # hms-claude-mem
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://isocpp.org/)
+[![GHCR](https://img.shields.io/badge/ghcr.io-hms--claude--mem-blue?logo=docker)](https://github.com/hms-homelab/hms-claude-mem/pkgs/container/hms-claude-mem)
+[![Build](https://github.com/hms-homelab/hms-claude-mem/actions/workflows/docker-build.yml/badge.svg)](https://github.com/hms-homelab/hms-claude-mem/actions)
+[![Release](https://img.shields.io/github/v/release/hms-homelab/hms-claude-mem?sort=semver&label=release)](https://github.com/hms-homelab/hms-claude-mem/releases/latest)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-%23FFDD00.svg?logo=buy-me-a-coffee)](https://www.buymeacoffee.com/aamat09)
 
 Persistent semantic memory for Claude Code via Redis 8 vectorsets. A C++ MCP server that gives Claude the ability to store, search, and retrieve context across sessions — surgically, on-demand, without bloating the context window.
@@ -74,6 +79,18 @@ export EMBED_HOST=https://api.openai.com
 export EMBED_MODEL=text-embedding-3-small
 export EMBED_API_KEY=sk-...
 ```
+
+## Download
+
+Prebuilt binaries are attached to every [GitHub Release](https://github.com/hms-homelab/hms-claude-mem/releases/latest):
+
+| Platform | Archive |
+|----------|---------|
+| Linux (amd64) | [hms_claude_mem-linux-amd64.tar.gz](https://github.com/hms-homelab/hms-claude-mem/releases/latest/download/hms_claude_mem-linux-amd64.tar.gz) |
+| Windows (amd64) | [hms_claude_mem-windows-amd64.zip](https://github.com/hms-homelab/hms-claude-mem/releases/latest/download/hms_claude_mem-windows-amd64.zip) |
+| macOS (arm64) | [hms_claude_mem-macos-arm64.tar.gz](https://github.com/hms-homelab/hms-claude-mem/releases/latest/download/hms_claude_mem-macos-arm64.tar.gz) |
+
+Each archive bundles the binary, `README.md`, `LICENSE`, and `VERSION`. The Windows zip also ships the runtime DLLs (hiredis, libcurl, zlib, openssl) next to the `.exe`. Prefer the Docker image or build from source if your distro's `hiredis` / `libcurl` ABI differs from the runner's.
 
 ## Build
 
@@ -207,6 +224,40 @@ If you built or pulled the Docker image, point Claude Code at it:
 - **Minimal config:** Only `NAMESPACE` and `EMBED_HOST` are typically needed — everything else has sensible defaults.
 - **Restart required:** Claude Code must be restarted after changing MCP configuration.
 - **Remote Redis:** Set `REDIS_HOST` to your Redis server IP for shared memory across machines.
+
+## Teach Claude to Use This MCP
+
+The first time you connect claude-mem to a new project, paste the block below into your Claude Code session. Claude will store these usage conventions as memories — so every future session retrieves them via `mem_search` instead of you having to re-explain.
+
+````markdown
+You now have the `claude-mem` MCP available (tools: `mem_store`, `mem_search`, `mem_get`, `mem_delete`, `mem_list`). Please store the following usage conventions as memories so future sessions can retrieve them.
+
+Store each of these with `mem_store`:
+
+1. key: "how and when to use mem_store"
+   category: "meta:claude-mem"
+   value: "Store a memory when you learn: a build/deploy command, a fix for a non-obvious bug, a user preference, a project decision with a durable why, or a reference to an external system. Do NOT store: ephemeral task state, info already in the code/git history, or duplicates — run mem_search first."
+
+2. key: "how and when to use mem_search"
+   category: "meta:claude-mem"
+   value: "Search semantically at the start of a task and before asking the user questions the codebase can't answer. Use descriptive natural-language queries (e.g. 'how do I deploy the CPAP service'). Top-k=5 is a reasonable default."
+
+3. key: "memory category conventions"
+   category: "meta:claude-mem"
+   value: "Use these category prefixes: 'project:<name>' for project-specific facts, 'user:preferences' for how the user likes to work, 'feedback:<topic>' for corrections/validations that should change future behavior, 'reference:<system>' for pointers to external systems, 'meta:claude-mem' for self-documentation of this MCP."
+
+4. key: "memory key naming convention"
+   category: "meta:claude-mem"
+   value: "Keys are what gets embedded and searched. Write full descriptive sentences ('deploy process for hms-cpap on raspberry pi'), not short slugs ('deploy-cpap'). The value holds the actual content."
+
+5. key: "avoid duplicate memories"
+   category: "meta:claude-mem"
+   value: "Before mem_store, run mem_search with the same phrasing. If a close match exists, mem_delete the old one or skip the new store. Drifting duplicates poison search results."
+
+After storing, confirm with `mem_list category=meta:claude-mem` that all five are present.
+````
+
+From then on, at the start of any session Claude can run `mem_search query="how to use claude-mem"` and these conventions will surface.
 
 ## Docker
 
