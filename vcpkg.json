@@ -1,0 +1,10 @@
+{
+  "name": "hms-claude-mem",
+  "version-string": "1.2.0",
+  "description": "Persistent semantic memory MCP server for Claude Code",
+  "dependencies": [
+    "hiredis",
+    "curl",
+    "nlohmann-json"
+  ]
+}
