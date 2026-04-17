@@ -4,6 +4,13 @@
 #include <sstream>
 #include <cmath>
 #include <algorithm>
+#include <ctime>
+
+#ifdef _WIN32
+  #define hms_timegm _mkgmtime
+#else
+  #define hms_timegm timegm
+#endif
 
 MemoryTools::MemoryTools(RedisClient& redis, EmbeddingClient& embedder,
                          double decay_rate)
@@ -23,7 +30,7 @@ double MemoryTools::ageDays(const std::string& timestamp) {
     ss >> std::get_time(&tm, "%Y-%m-%dT%H:%M:%SZ");
     if (ss.fail()) return 0.0;
 
-    auto stored = std::chrono::system_clock::from_time_t(timegm(&tm));
+    auto stored = std::chrono::system_clock::from_time_t(hms_timegm(&tm));
     auto current = std::chrono::system_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::hours>(current - stored);
     return duration.count() / 24.0;
