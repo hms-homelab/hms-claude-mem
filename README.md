@@ -9,6 +9,8 @@
 
 Persistent semantic memory for Claude Code via Redis 8 vectorsets. A C++ MCP server that gives Claude the ability to store, search, and retrieve context across sessions — surgically, on-demand, without bloating the context window.
 
+**Embeddings run in-process by default** (bundled `nomic-embed-text` via llama.cpp) — no Ollama or external API required. Just the binary + Redis.
+
 ## The Problem
 
 LLMs have limited context windows. As conversations grow, early context gets compressed and lost. File-based memory (like `MEMORY.md`) loads everything upfront, wasting context on things that aren't relevant right now.
@@ -28,8 +30,9 @@ Claude Code  <──stdio JSON-RPC──>  hms_claude_mem (C++ binary)
                                         │    ├── VADD/VSIM  → semantic vector search
                                         │    └── HSET/HGET  → key-value storage
                                         │
-                                        └── Embedding Provider (Ollama, OpenAI, vLLM, etc.)
-                                             └── nomic-embed-text / text-embedding-3-small / etc.
+                                        └── Embeddings
+                                             ├── Local (default) — bundled nomic-embed-text via llama.cpp, in-process
+                                             └── External (opt-in) — Ollama / OpenAI / vLLM / any OpenAI-compatible API
 ```
 
 ## How It Works
@@ -62,7 +65,9 @@ Searching for "how do I push code to the Pi" will find this memory via cosine si
 ## Prerequisites
 
 - **Redis 8+** with vectorset module (built-in since Redis 8.0)
-- **Any embedding provider**: Ollama, OpenAI, vLLM, LiteLLM, LocalAI, or anything OpenAI-compatible
+- **No embedding service needed** — embeddings run in-process by default via a
+  bundled `nomic-embed-text` model. Ollama / OpenAI / any OpenAI-compatible API
+  remain available as opt-in providers.
 - **C++17** compiler
 - **libhiredis-dev**, **libcurl4-openssl-dev**, **nlohmann-json3-dev**
 
@@ -70,10 +75,13 @@ Searching for "how do I push code to the Pi" will find this memory via cosine si
 # Install dependencies (Debian/Ubuntu)
 sudo apt install -y libhiredis-dev libcurl4-openssl-dev nlohmann-json3-dev
 
-# Option A: Ollama (local, free)
+# Default: in-process local model — nothing else to run.
+
+# Opt-in: Ollama
+export EMBED_PROVIDER=ollama
 ollama pull nomic-embed-text
 
-# Option B: OpenAI-compatible (any provider)
+# Opt-in: OpenAI-compatible (any provider)
 export EMBED_PROVIDER=openai
 export EMBED_HOST=https://api.openai.com
 export EMBED_MODEL=text-embedding-3-small
@@ -96,8 +104,14 @@ Each archive bundles the binary, `README.md`, `LICENSE`, and `VERSION`. The Wind
 
 ```bash
 mkdir build && cd build
-cmake ..
+cmake ..                 # fetches llama.cpp + downloads the bundled model (~139 MB)
 make -j$(nproc)
+```
+
+The default build embeds llama.cpp and downloads the GGUF (SHA256-verified) next to the binary. To build a lean binary with no local model (Ollama/OpenAI only):
+
+```bash
+cmake .. -DWITH_LOCAL_EMBED=OFF
 ```
 
 ## Test
@@ -118,9 +132,10 @@ Environment variables with sensible defaults:
 | `REDIS_HOST` | `127.0.0.1` | Redis server address |
 | `REDIS_PORT` | `6379` | Redis server port |
 | `NAMESPACE` | `default` | Memory namespace (isolates per project/user) |
-| `EMBED_PROVIDER` | `ollama` | Embedding provider: `ollama` or `openai` |
-| `EMBED_HOST` | `http://localhost:11434` | Embedding API endpoint (falls back to `OLLAMA_HOST`) |
-| `EMBED_MODEL` | `nomic-embed-text` | Embedding model name |
+| `EMBED_PROVIDER` | `local` | Embedding provider: `local` (bundled, in-process), `ollama`, or `openai` |
+| `LOCAL_EMBED_MODEL` | *(bundled GGUF)* | Path to an embedding GGUF for `local` (advanced; bundled nomic is the supported default) |
+| `EMBED_HOST` | `http://localhost:11434` | Embedding API endpoint for `ollama`/`openai` (falls back to `OLLAMA_HOST`) |
+| `EMBED_MODEL` | `nomic-embed-text` | Embedding model name (for `ollama`/`openai`) |
 | `EMBED_API_KEY` | *(empty)* | Bearer token for authenticated providers |
 | `DECAY_RATE` | `0.01` | Recency decay per day (0.01 = 1%/day, 0 = disabled) |
 
@@ -130,7 +145,27 @@ Environment variables with sensible defaults:
 
 Add to `.mcp.json` in your project root. Memories are isolated to this project:
 
-**Ollama (local, free):**
+**Local (default — no external service):**
+```json
+{
+  "mcpServers": {
+    "claude-mem": {
+      "command": "/path/to/build/hms_claude_mem",
+      "args": [],
+      "env": {
+        "REDIS_HOST": "127.0.0.1",
+        "REDIS_PORT": "6379",
+        "NAMESPACE": "my-project",
+        "DECAY_RATE": "0.01"
+      }
+    }
+  }
+}
+```
+
+The bundled model is found automatically next to the binary (`<dir>/models/`). Set `LOCAL_EMBED_MODEL` to override the path.
+
+**Ollama (opt-in):**
 ```json
 {
   "mcpServers": {

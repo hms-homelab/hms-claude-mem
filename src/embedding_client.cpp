@@ -4,6 +4,10 @@
 #include <stdexcept>
 #include <cstdlib>
 
+#ifdef HMS_WITH_LOCAL_EMBED
+#include "local_embedder.h"
+#endif
+
 using json = nlohmann::json;
 
 namespace {
@@ -32,9 +36,17 @@ size_t writeCallback(char* ptr, size_t size, size_t nmemb, std::string* data) {
 } // namespace
 
 EmbeddingClient::EmbeddingClient(const std::string& host, const std::string& model,
-                                 EmbedProvider provider, const std::string& api_key)
-    : host_(host), model_(model), provider_(provider), api_key_(api_key) {
+                                 EmbedProvider provider, const std::string& api_key,
+                                 const std::string& local_model_path)
+    : host_(host), model_(model), provider_(provider), api_key_(api_key),
+      local_model_path_(local_model_path) {
     curl_global_init(CURL_GLOBAL_DEFAULT);
+#ifdef HMS_WITH_LOCAL_EMBED
+    if (provider_ == EmbedProvider::Local) {
+        // Lazy: constructor only records the path hint; the model loads on first embed().
+        local_ = std::make_unique<LocalEmbedder>(local_model_path_);
+    }
+#endif
 }
 
 EmbeddingClient::~EmbeddingClient() {
@@ -101,8 +113,19 @@ std::vector<float> EmbeddingClient::embedOpenAI(const std::string& text) {
     return j["data"][0]["embedding"].get<std::vector<float>>();
 }
 
+std::vector<float> EmbeddingClient::embedLocal(const std::string& text) {
+#ifdef HMS_WITH_LOCAL_EMBED
+    return local_->embed(text);
+#else
+    (void)text;
+    throw std::runtime_error(
+        "built without local embeddings (WITH_LOCAL_EMBED=OFF); set EMBED_PROVIDER=ollama");
+#endif
+}
+
 std::vector<float> EmbeddingClient::embed(const std::string& text) {
     switch (provider_) {
+        case EmbedProvider::Local:  return embedLocal(text);
         case EmbedProvider::Ollama: return embedOllama(text);
         case EmbedProvider::OpenAI: return embedOpenAI(text);
     }

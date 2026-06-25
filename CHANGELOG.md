@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.3.0] - 2026-06-25
+
+### Added
+- **In-process embeddings (no Ollama required)** via llama.cpp, loading a bundled
+  `nomic-embed-text-v1.5` Q8_0 GGUF. This is now the **default** provider
+  (`EMBED_PROVIDER=local`). Ollama and OpenAI remain available via the flag.
+- `LOCAL_EMBED_MODEL` env to point at any embedding GGUF (advanced; the bundled
+  nomic is the supported, parity-validated default). Also `LOCAL_EMBED_CTX`,
+  `LOCAL_EMBED_THREADS`, `LOCAL_EMBED_GPU_LAYERS`.
+- The model is bundled with every artifact (release tarballs/zip, Docker image)
+  and downloaded SHA256-verified at build time (`HMS_DOWNLOAD_MODEL`).
+- `WITH_LOCAL_EMBED` CMake option (default ON); OFF builds a lean
+  Ollama/OpenAI-only binary with no llama.cpp dependency.
+
+### Changed
+- Default `EMBED_PROVIDER` flips from `ollama` to `local`. The local path
+  replicates Ollama exactly (raw text → MEAN pool → L2-normalize), so existing
+  Ollama-embedded corpora stay valid — **no re-embed needed** (validated: p5
+  cosine ≥ 0.998 vs Ollama over the live corpus).
+- Local model loads lazily on first embed (not at startup), preserving the
+  instant MCP handshake from 1.2.1.
+
+### Migration
+- To keep using Ollama, set `EMBED_PROVIDER=ollama` (and `EMBED_HOST`) in your
+  MCP server env. Otherwise the bundled local model is used automatically.
+
 ## [1.2.1] - 2026-06-25
 
 ### Changed

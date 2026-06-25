@@ -46,6 +46,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Cache the bundled GGUF (keyed on its SHA256) so configure skips the
+      # 139 MB download. Restored into build/models before configure runs.
+      - name: Cache embedding model
+        uses: actions/cache@v4
+        with:
+          path: build/models
+          key: gguf-nomic-v1.5-q8-3e24342164b3
+
       # ------------------ Linux ------------------
       - name: Install deps (Linux)
         if: runner.os == 'Linux'
@@ -128,6 +136,7 @@ jobs:
           mkdir -p dist
           cp build/${{ matrix.binary }} dist/
           cp README.md LICENSE VERSION dist/
+          cp -r build/models dist/models
           tar -czf ${{ matrix.artifact }}.tar.gz -C dist .
 
       - name: Package (zip)
@@ -138,6 +147,7 @@ jobs:
           Copy-Item "build/hms_claude_mem.exe" "dist/"
           Copy-Item "build/*.dll" "dist/" -ErrorAction SilentlyContinue
           Copy-Item "README.md","LICENSE","VERSION" "dist/"
+          Copy-Item "build/models" "dist/models" -Recurse
           Compress-Archive -Path "dist/*" -DestinationPath "${{ matrix.artifact }}.zip"
 
       - name: Upload artifact
