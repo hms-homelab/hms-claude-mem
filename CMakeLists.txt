@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(hms-claude-mem VERSION 1.3.0 LANGUAGES CXX)
+project(hms-claude-mem VERSION 1.3.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -160,6 +160,28 @@ if(BUILD_PARITY_BENCH AND WITH_LOCAL_EMBED)
     endif()
     if(NOT WIN32)
         target_link_libraries(parity_bench PRIVATE pthread)
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
+# Store-parity bench (SDD-002 §6 gate): EmbeddedStore search vs Redis VSIM.
+# Off by default; needs a Redis to point at. No llama/curl needed.
+# ---------------------------------------------------------------------------
+option(BUILD_STORE_PARITY "Build the embedded-store vs Redis search parity bench" OFF)
+if(BUILD_STORE_PARITY)
+    add_executable(store_parity_bench
+        tools/store_parity_bench.cpp
+        src/embedded_store.cpp
+        src/redis_client.cpp)
+    target_include_directories(store_parity_bench PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    if(hiredis_FOUND)
+        target_link_libraries(store_parity_bench PRIVATE hiredis::hiredis)
+    else()
+        target_include_directories(store_parity_bench PRIVATE ${HIREDIS_INCLUDE})
+        target_link_libraries(store_parity_bench PRIVATE ${HIREDIS_LIB})
+    endif()
+    if(NOT WIN32)
+        target_link_libraries(store_parity_bench PRIVATE pthread)
     endif()
 endif()
 

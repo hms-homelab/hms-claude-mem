@@ -1,14 +1,38 @@
 #include "mcp_server.h"
+#include "memory_store.h"
 #include "redis_client.h"
+#include "embedded_store.h"
 #include "embedding_client.h"
 #include "tools.h"
+#include <csignal>
 #include <cstdlib>
+#include <memory>
 #include <string>
 
 namespace {
 std::string getEnv(const char* name, const std::string& fallback) {
     const char* val = std::getenv(name);
     return val ? std::string(val) : fallback;
+}
+
+// For shutdown durability: a signal handler installs a non-default disposition
+// (without SA_RESTART) so a blocked std::getline returns on SIGTERM/SIGINT,
+// letting main() return and the store's destructor flush.
+volatile std::sig_atomic_t g_signaled = 0;
+void onSignal(int) { g_signaled = 1; }
+
+void installShutdownSignals() {
+#ifndef _WIN32
+    struct sigaction sa{};
+    sa.sa_handler = onSignal;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0; // no SA_RESTART: interrupt the blocking read
+    sigaction(SIGTERM, &sa, nullptr);
+    sigaction(SIGINT, &sa, nullptr);
+#else
+    std::signal(SIGTERM, onSignal);
+    std::signal(SIGINT, onSignal);
+#endif
 }
 } // namespace
 
@@ -30,6 +54,11 @@ int main() {
     std::string ns = getEnv("NAMESPACE", "default");
     double decay_rate = std::stod(getEnv("DECAY_RATE", "0.01"));
 
+    // Storage backend. Default is "local" (embedded file-backed store — no Redis
+    // needed). Set STORE_PROVIDER=redis for a shared/multi-machine Redis backend.
+    std::string store_provider = getEnv("STORE_PROVIDER", "local");
+    std::string store_path = getEnv("STORE_PATH", "");
+
     EmbedProvider provider = EmbedProvider::Local;
     if (embed_provider_str == "ollama") {
         provider = EmbedProvider::Ollama;
@@ -37,18 +66,25 @@ int main() {
         provider = EmbedProvider::OpenAI;
     }
 
-    // Lazy by design: do NOT connect to Redis or warm the embed model here.
-    // The MCP initialize handshake must return instantly, otherwise a cold
-    // Ollama load or a slow Redis round-trip can blow Claude Code's startup
-    // timeout and the server gets marked disconnected. The first actual tool
-    // call establishes the Redis connection (with backoff) and the embed.
-    RedisClient redis(redis_host, redis_port, ns);
+    // Lazy by design: do NOT connect to Redis, load the store file, or warm the
+    // embed model here. The MCP initialize handshake must return instantly,
+    // otherwise a cold load or slow round-trip can blow Claude Code's startup
+    // timeout. The first actual tool call establishes the backend + embed.
+    std::unique_ptr<IMemoryStore> store;
+    if (store_provider == "local") {
+        store = std::make_unique<EmbeddedStore>(ns, store_path);
+    } else {
+        store = std::make_unique<RedisClient>(redis_host, redis_port, ns);
+    }
+
+    installShutdownSignals();
 
     EmbeddingClient embedder(embed_host, embed_model, provider, embed_api_key, local_model_path);
-    MemoryTools tools(redis, embedder, decay_rate);
+    MemoryTools tools(*store, embedder, decay_rate);
     McpServer server(tools);
 
     server.run();
 
+    // store's destructor flushes any pending writes (EmbeddedStore write-back).
     return 0;
 }

@@ -1,5 +1,5 @@
 #pragma once
-#include "redis_client.h"
+#include "memory_store.h"
 #include "embedding_client.h"
 #include <nlohmann/json.hpp>
 #include <string>
@@ -8,7 +8,7 @@ using json = nlohmann::json;
 
 class MemoryTools {
 public:
-    MemoryTools(RedisClient& redis, EmbeddingClient& embedder,
+    MemoryTools(IMemoryStore& store, EmbeddingClient& embedder,
                 double decay_rate = 0.01);
 
     json store(const std::string& key, const std::string& value,
@@ -24,7 +24,7 @@ private:
     double ageDays(const std::string& timestamp);
     double computeFinalScore(double similarity, double age_days, bool pinned);
 
-    RedisClient& redis_;
+    IMemoryStore& store_;
     EmbeddingClient& embedder_;
     double decay_rate_; // score penalty per day (0.01 = 1% per day)
 };

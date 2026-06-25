@@ -7,9 +7,9 @@
 [![Release](https://img.shields.io/github/v/release/hms-homelab/hms-claude-mem?sort=semver&label=release)](https://github.com/hms-homelab/hms-claude-mem/releases/latest)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-%23FFDD00.svg?logo=buy-me-a-coffee)](https://www.buymeacoffee.com/aamat09)
 
-Persistent semantic memory for Claude Code via Redis 8 vectorsets. A C++ MCP server that gives Claude the ability to store, search, and retrieve context across sessions — surgically, on-demand, without bloating the context window.
+Persistent semantic memory for Claude Code. A C++ MCP server that gives Claude the ability to store, search, and retrieve context across sessions — surgically, on-demand, without bloating the context window.
 
-**Embeddings run in-process by default** (bundled `nomic-embed-text` via llama.cpp) — no Ollama or external API required. Just the binary + Redis.
+**Runs with zero external services by default.** Embeddings run in-process (bundled `nomic-embed-text` via llama.cpp) and storage is an embedded local file — no Ollama, no API, no Redis. Just the binary. Redis and Ollama/OpenAI remain available as opt-in for shared or multi-machine setups.
 
 ## The Problem
 
@@ -26,9 +26,9 @@ A Redis-backed semantic memory system that Claude manages itself:
 ```
 Claude Code  <──stdio JSON-RPC──>  hms_claude_mem (C++ binary)
                                         │
-                                        ├── Redis 8 (vectorset module)
-                                        │    ├── VADD/VSIM  → semantic vector search
-                                        │    └── HSET/HGET  → key-value storage
+                                        ├── Storage
+                                        │    ├── Local (default) — in-process vector index + local file, write-back persisted
+                                        │    └── Redis (opt-in)  — Redis 8 vectorset (VADD/VSIM + HSET/HGET), shared/multi-machine
                                         │
                                         └── Embeddings
                                              ├── Local (default) — bundled nomic-embed-text via llama.cpp, in-process
@@ -64,10 +64,11 @@ Searching for "how do I push code to the Pi" will find this memory via cosine si
 
 ## Prerequisites
 
-- **Redis 8+** with vectorset module (built-in since Redis 8.0)
-- **No embedding service needed** — embeddings run in-process by default via a
-  bundled `nomic-embed-text` model. Ollama / OpenAI / any OpenAI-compatible API
-  remain available as opt-in providers.
+- **Nothing external by default.** Storage is an embedded local file and embeddings
+  run in-process — no Redis, no Ollama, no API.
+- **Opt-in Redis**: `STORE_PROVIDER=redis` needs **Redis 8+** with the vectorset
+  module (built-in since Redis 8.0) for shared/multi-machine storage.
+- **Opt-in external embeddings**: Ollama / OpenAI / any OpenAI-compatible API.
 - **C++17** compiler
 - **libhiredis-dev**, **libcurl4-openssl-dev**, **nlohmann-json3-dev**
 
@@ -75,9 +76,13 @@ Searching for "how do I push code to the Pi" will find this memory via cosine si
 # Install dependencies (Debian/Ubuntu)
 sudo apt install -y libhiredis-dev libcurl4-openssl-dev nlohmann-json3-dev
 
-# Default: in-process local model — nothing else to run.
+# Default: embedded store + in-process model — nothing else to run.
 
-# Opt-in: Ollama
+# Opt-in: Redis storage
+export STORE_PROVIDER=redis
+export REDIS_HOST=127.0.0.1
+
+# Opt-in: Ollama embeddings
 export EMBED_PROVIDER=ollama
 ollama pull nomic-embed-text
 
@@ -129,8 +134,11 @@ Environment variables with sensible defaults:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `REDIS_HOST` | `127.0.0.1` | Redis server address |
-| `REDIS_PORT` | `6379` | Redis server port |
+| `STORE_PROVIDER` | `local` | Storage backend: `local` (embedded file) or `redis` |
+| `STORE_PATH` | `~/.hms-claude-mem/store/<ns>.db` | Embedded store file path override |
+| `STORE_FLUSH_IDLE_MS` | `2000` | Idle debounce before the embedded store flushes to disk |
+| `REDIS_HOST` | `127.0.0.1` | Redis server address (when `STORE_PROVIDER=redis`) |
+| `REDIS_PORT` | `6379` | Redis server port (when `STORE_PROVIDER=redis`) |
 | `NAMESPACE` | `default` | Memory namespace (isolates per project/user) |
 | `EMBED_PROVIDER` | `local` | Embedding provider: `local` (bundled, in-process), `ollama`, or `openai` |
 | `LOCAL_EMBED_MODEL` | *(bundled GGUF)* | Path to an embedding GGUF for `local` (advanced; bundled nomic is the supported default) |
@@ -145,7 +153,7 @@ Environment variables with sensible defaults:
 
 Add to `.mcp.json` in your project root. Memories are isolated to this project:
 
-**Local (default — no external service):**
+**Local (default — no external service at all):**
 ```json
 {
   "mcpServers": {
@@ -153,8 +161,6 @@ Add to `.mcp.json` in your project root. Memories are isolated to this project:
       "command": "/path/to/build/hms_claude_mem",
       "args": [],
       "env": {
-        "REDIS_HOST": "127.0.0.1",
-        "REDIS_PORT": "6379",
         "NAMESPACE": "my-project",
         "DECAY_RATE": "0.01"
       }
@@ -163,9 +169,9 @@ Add to `.mcp.json` in your project root. Memories are isolated to this project:
 }
 ```
 
-The bundled model is found automatically next to the binary (`<dir>/models/`). Set `LOCAL_EMBED_MODEL` to override the path.
+Embedded store file lives at `~/.hms-claude-mem/store/<namespace>.db` (override with `STORE_PATH`). The bundled model is found next to the binary (`<dir>/models/`; override with `LOCAL_EMBED_MODEL`).
 
-**Ollama (opt-in):**
+**Redis + Ollama (opt-in, shared/multi-machine):**
 ```json
 {
   "mcpServers": {
@@ -173,6 +179,7 @@ The bundled model is found automatically next to the binary (`<dir>/models/`). S
       "command": "/path/to/build/hms_claude_mem",
       "args": [],
       "env": {
+        "STORE_PROVIDER": "redis",
         "REDIS_HOST": "127.0.0.1",
         "REDIS_PORT": "6379",
         "EMBED_PROVIDER": "ollama",

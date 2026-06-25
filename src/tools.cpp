@@ -12,9 +12,9 @@
   #define hms_timegm timegm
 #endif
 
-MemoryTools::MemoryTools(RedisClient& redis, EmbeddingClient& embedder,
+MemoryTools::MemoryTools(IMemoryStore& store, EmbeddingClient& embedder,
                          double decay_rate)
-    : redis_(redis), embedder_(embedder), decay_rate_(decay_rate) {}
+    : store_(store), embedder_(embedder), decay_rate_(decay_rate) {}
 
 std::string MemoryTools::now() {
     auto t = std::chrono::system_clock::now();
@@ -52,16 +52,16 @@ json MemoryTools::store(const std::string& key, const std::string& value,
         return {{"error", std::string("Embedding failed: ") + e.what()}};
     }
 
-    auto existing = redis_.hashGet(key);
+    auto existing = store_.hashGet(key);
     std::string created = existing ? existing->created_at : now();
 
-    if (!redis_.vectorAdd(key, embedding)) {
+    if (!store_.vectorAdd(key, embedding)) {
         return {{"error", "Failed to store vector"}};
     }
 
     MemoryEntry entry{key, value, category, created, now(), pinned};
-    if (!redis_.hashSet(key, entry)) {
-        redis_.vectorRemove(key);
+    if (!store_.hashSet(key, entry)) {
+        store_.vectorRemove(key);
         return {{"error", "Failed to store metadata"}};
     }
 
@@ -80,7 +80,7 @@ json MemoryTools::search(const std::string& query, int top_k,
 
     // Over-fetch when filtering by category since some results will be dropped
     int fetch_count = category.empty() ? top_k : top_k * 3;
-    auto results = redis_.vectorSearch(embedding, fetch_count);
+    auto results = store_.vectorSearch(embedding, fetch_count);
 
     struct ScoredResult {
         std::string key;
@@ -94,7 +94,7 @@ json MemoryTools::search(const std::string& query, int top_k,
 
     std::vector<ScoredResult> scored;
     for (auto& [key, sim] : results) {
-        auto entry = redis_.hashGet(key);
+        auto entry = store_.hashGet(key);
         if (!entry) continue;
 
         // Category filter
@@ -135,7 +135,7 @@ json MemoryTools::search(const std::string& query, int top_k,
 }
 
 json MemoryTools::get(const std::string& key) {
-    auto entry = redis_.hashGet(key);
+    auto entry = store_.hashGet(key);
     if (!entry) {
         return {{"error", "Key not found: " + key}};
     }
@@ -145,19 +145,19 @@ json MemoryTools::get(const std::string& key) {
 }
 
 json MemoryTools::remove(const std::string& key) {
-    redis_.vectorRemove(key);
-    redis_.hashDelete(key);
+    store_.vectorRemove(key);
+    store_.hashDelete(key);
     return {{"status", "deleted"}, {"key", key}};
 }
 
 json MemoryTools::list(const std::string& category, int limit) {
-    auto keys = redis_.scanKeys("*", limit * 2);
+    auto keys = store_.scanKeys("*", limit * 2);
 
     json items = json::array();
     for (auto& key : keys) {
         if (static_cast<int>(items.size()) >= limit) break;
 
-        auto entry = redis_.hashGet(key);
+        auto entry = store_.hashGet(key);
         if (!entry) continue;
         if (!category.empty() && entry->category != category) continue;
 

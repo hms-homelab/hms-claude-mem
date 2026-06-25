@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.3.1] - 2026-06-25
+
+### Added
+- **Embedded local store (no Redis required)** — `STORE_PROVIDER=local`, now the
+  **default**. An in-process vector index + metadata persisted to a local file
+  (`~/.hms-claude-mem/store/<namespace>.db`, override with `STORE_PATH`). With
+  in-process embeddings (1.3.0), the server now needs **no external service** at all.
+- **Write-back persistence**: in-memory is the source of truth; mutations flush to
+  disk on idle (debounced, `STORE_FLUSH_IDLE_MS`, default 2000 ms) and on clean
+  shutdown (stdin close, `SIGTERM`/`SIGINT`). Crash-safe writes (tmp + fsync +
+  atomic rename). A hard crash loses only writes since the last flush.
+- `IMemoryStore` interface abstracts the backend; `RedisClient` and the new
+  `EmbeddedStore` both implement it.
+
+### Changed
+- Default `STORE_PROVIDER` flips from `redis` to `local`. Set `STORE_PROVIDER=redis`
+  (+ `REDIS_HOST`) to keep using Redis (shared/multi-machine setups).
+- Search is brute-force cosine in-process; scores match Redis VSIM's `(1+cos)/2`
+  (validated: overlap 0.98, top-1 0.97, score MAE 1.6e-4 — within Redis's own int8
+  quantization noise).
+
+### Migration
+- Existing Redis users: set `STORE_PROVIDER=redis` to stay on your Redis data.
+  Otherwise a fresh embedded store file is used. (An optional `--import-redis` is
+  planned for moving a Redis namespace into an embedded file.)
+
 ## [1.3.0] - 2026-06-25
 
 ### Added

@@ -36,10 +36,11 @@ COPY --from=builder /app/build/models /usr/local/bin/models
 
 USER claude-mem
 
-ENV REDIS_HOST=127.0.0.1
-ENV REDIS_PORT=6379
-# Embeddings default to the bundled in-process model (no Ollama needed).
-# To use Ollama instead: -e EMBED_PROVIDER=ollama -e EMBED_HOST=http://host:11434
+# Storage + embeddings default to in-process (no Redis/Ollama needed).
+# Persist the embedded store by mounting a volume at the store path, e.g.:
+#   docker run -e STORE_PATH=/data/mem.db -v hms-mem:/data ghcr.io/hms-homelab/hms-claude-mem
+# To use Redis instead: -e STORE_PROVIDER=redis -e REDIS_HOST=host
+# To use Ollama embeddings: -e EMBED_PROVIDER=ollama -e EMBED_HOST=http://host:11434
 ENV EMBED_MODEL=nomic-embed-text
 
 ENTRYPOINT ["hms_claude_mem"]
