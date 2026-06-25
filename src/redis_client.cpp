@@ -2,9 +2,30 @@
 #include <hiredis/hiredis.h>
 #include <sstream>
 #include <cstring>
+#include <cstdlib>
+#include <chrono>
+#include <thread>
+#include <iostream>
+#include <algorithm>
+
+namespace {
+// All diagnostics go to stderr only. stdout is reserved for JSON-RPC framing.
+void logErr(const std::string& msg) {
+    std::cerr << "[claude-mem][redis] " << msg << "\n";
+}
+
+int envInt(const char* name, int fallback) {
+    const char* v = std::getenv(name);
+    if (!v) return fallback;
+    try { return std::stoi(v); } catch (...) { return fallback; }
+}
+} // namespace
 
 RedisClient::RedisClient(const std::string& host, int port, const std::string& ns)
-    : host_(host), port_(port), namespace_(ns), ctx_(nullptr) {}
+    : host_(host), port_(port), namespace_(ns), ctx_(nullptr) {
+    // At least 10 attempts before giving up (configurable, never lower).
+    max_retries_ = std::max(10, envInt("REDIS_MAX_RETRIES", 10));
+}
 
 RedisClient::~RedisClient() {
     if (ctx_) {
@@ -39,12 +60,50 @@ bool RedisClient::connect() {
 }
 
 bool RedisClient::isConnected() const {
-    return ctx_ != nullptr;
+    auto* c = static_cast<redisContext*>(ctx_);
+    return c != nullptr && c->err == 0;
+}
+
+void RedisClient::dropConnection() {
+    if (ctx_) {
+        redisFree(static_cast<redisContext*>(ctx_));
+        ctx_ = nullptr;
+    }
+}
+
+bool RedisClient::ensureConnected() {
+    // Already have a healthy context.
+    if (isConnected()) return true;
+    dropConnection();
+
+    // Exponential backoff, capped per-attempt, giving up after max_retries_.
+    int delay_ms = 100;
+    const int cap_ms = 2000;
+    for (int attempt = 1; attempt <= max_retries_; ++attempt) {
+        if (connect()) {
+            if (attempt > 1) {
+                logErr("reconnected to " + host_ + ":" + std::to_string(port_) +
+                       " on attempt " + std::to_string(attempt));
+            }
+            return true;
+        }
+        if (attempt < max_retries_) {
+            logErr("connect to " + host_ + ":" + std::to_string(port_) +
+                   " failed (attempt " + std::to_string(attempt) + "/" +
+                   std::to_string(max_retries_) + "), retrying in " +
+                   std::to_string(delay_ms) + "ms");
+            std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+            delay_ms = std::min(delay_ms * 2, cap_ms);
+        }
+    }
+    logErr("giving up connecting to " + host_ + ":" + std::to_string(port_) +
+           " after " + std::to_string(max_retries_) + " attempts");
+    return false;
 }
 
 bool RedisClient::vectorAdd(const std::string& key, const std::vector<float>& embedding) {
+    if (!ensureConnected()) return false;
     auto* c = static_cast<redisContext*>(ctx_);
-    if (!c) return false;
 
     std::string vkey = vectorKey();
     int dim = static_cast<int>(embedding.size());
@@ -70,7 +129,7 @@ bool RedisClient::vectorAdd(const std::string& key, const std::vector<float>& em
 
     auto* reply = static_cast<redisReply*>(
         redisCommandArgv(c, argc, argv.data(), argvlen.data()));
-    if (!reply) return false;
+    if (!reply) { dropConnection(); return false; }
 
     bool ok = (reply->type != REDIS_REPLY_ERROR);
     freeReplyObject(reply);
@@ -78,13 +137,13 @@ bool RedisClient::vectorAdd(const std::string& key, const std::vector<float>& em
 }
 
 bool RedisClient::vectorRemove(const std::string& key) {
+    if (!ensureConnected()) return false;
     auto* c = static_cast<redisContext*>(ctx_);
-    if (!c) return false;
 
     std::string vkey = vectorKey();
     auto* reply = static_cast<redisReply*>(
         redisCommand(c, "VREM %s %s", vkey.c_str(), key.c_str()));
-    if (!reply) return false;
+    if (!reply) { dropConnection(); return false; }
 
     bool ok = (reply->type != REDIS_REPLY_ERROR);
     freeReplyObject(reply);
@@ -94,9 +153,9 @@ bool RedisClient::vectorRemove(const std::string& key) {
 std::vector<std::pair<std::string, double>> RedisClient::vectorSearch(
     const std::vector<float>& query, int top_k) {
 
-    auto* c = static_cast<redisContext*>(ctx_);
     std::vector<std::pair<std::string, double>> results;
-    if (!c) return results;
+    if (!ensureConnected()) return results;
+    auto* c = static_cast<redisContext*>(ctx_);
 
     std::string vkey = vectorKey();
     int dim = static_cast<int>(query.size());
@@ -124,8 +183,9 @@ std::vector<std::pair<std::string, double>> RedisClient::vectorSearch(
 
     auto* reply = static_cast<redisReply*>(
         redisCommandArgv(c, argc, argv.data(), argvlen.data()));
-    if (!reply || reply->type != REDIS_REPLY_ARRAY) {
-        if (reply) freeReplyObject(reply);
+    if (!reply) { dropConnection(); return results; }
+    if (reply->type != REDIS_REPLY_ARRAY) {
+        freeReplyObject(reply);
         return results;
     }
 
@@ -141,8 +201,8 @@ std::vector<std::pair<std::string, double>> RedisClient::vectorSearch(
 }
 
 bool RedisClient::hashSet(const std::string& key, const MemoryEntry& entry) {
+    if (!ensureConnected()) return false;
     auto* c = static_cast<redisContext*>(ctx_);
-    if (!c) return false;
 
     std::string hkey = dataKey(key);
     std::string pinned_str = entry.pinned ? "1" : "0";
@@ -151,7 +211,7 @@ bool RedisClient::hashSet(const std::string& key, const MemoryEntry& entry) {
                      hkey.c_str(), entry.value.c_str(), entry.category.c_str(),
                      entry.created_at.c_str(), entry.updated_at.c_str(),
                      pinned_str.c_str()));
-    if (!reply) return false;
+    if (!reply) { dropConnection(); return false; }
 
     bool ok = (reply->type != REDIS_REPLY_ERROR);
     freeReplyObject(reply);
@@ -159,14 +219,15 @@ bool RedisClient::hashSet(const std::string& key, const MemoryEntry& entry) {
 }
 
 std::optional<MemoryEntry> RedisClient::hashGet(const std::string& key) {
+    if (!ensureConnected()) return std::nullopt;
     auto* c = static_cast<redisContext*>(ctx_);
-    if (!c) return std::nullopt;
 
     std::string hkey = dataKey(key);
     auto* reply = static_cast<redisReply*>(
         redisCommand(c, "HGETALL %s", hkey.c_str()));
-    if (!reply || reply->type != REDIS_REPLY_ARRAY || reply->elements == 0) {
-        if (reply) freeReplyObject(reply);
+    if (!reply) { dropConnection(); return std::nullopt; }
+    if (reply->type != REDIS_REPLY_ARRAY || reply->elements == 0) {
+        freeReplyObject(reply);
         return std::nullopt;
     }
 
@@ -187,13 +248,13 @@ std::optional<MemoryEntry> RedisClient::hashGet(const std::string& key) {
 }
 
 bool RedisClient::hashDelete(const std::string& key) {
+    if (!ensureConnected()) return false;
     auto* c = static_cast<redisContext*>(ctx_);
-    if (!c) return false;
 
     std::string hkey = dataKey(key);
     auto* reply = static_cast<redisReply*>(
         redisCommand(c, "DEL %s", hkey.c_str()));
-    if (!reply) return false;
+    if (!reply) { dropConnection(); return false; }
 
     bool ok = (reply->type != REDIS_REPLY_ERROR);
     freeReplyObject(reply);
@@ -201,9 +262,9 @@ bool RedisClient::hashDelete(const std::string& key) {
 }
 
 std::vector<std::string> RedisClient::scanKeys(const std::string& pattern, int count) {
-    auto* c = static_cast<redisContext*>(ctx_);
     std::vector<std::string> keys;
-    if (!c) return keys;
+    if (!ensureConnected()) return keys;
+    auto* c = static_cast<redisContext*>(ctx_);
 
     std::string cursor = "0";
     std::string prefix = dataPrefix();
@@ -213,8 +274,9 @@ std::vector<std::string> RedisClient::scanKeys(const std::string& pattern, int c
         auto* reply = static_cast<redisReply*>(
             redisCommand(c, "SCAN %s MATCH %s COUNT %d",
                          cursor.c_str(), full_pattern.c_str(), count));
-        if (!reply || reply->type != REDIS_REPLY_ARRAY || reply->elements != 2) {
-            if (reply) freeReplyObject(reply);
+        if (!reply) { dropConnection(); break; }
+        if (reply->type != REDIS_REPLY_ARRAY || reply->elements != 2) {
+            freeReplyObject(reply);
             break;
         }
 

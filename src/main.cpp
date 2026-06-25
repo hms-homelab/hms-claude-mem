@@ -3,7 +3,6 @@
 #include "embedding_client.h"
 #include "tools.h"
 #include <cstdlib>
-#include <iostream>
 #include <string>
 
 namespace {
@@ -28,12 +27,12 @@ int main() {
         provider = EmbedProvider::OpenAI;
     }
 
+    // Lazy by design: do NOT connect to Redis or warm the embed model here.
+    // The MCP initialize handshake must return instantly, otherwise a cold
+    // Ollama load or a slow Redis round-trip can blow Claude Code's startup
+    // timeout and the server gets marked disconnected. The first actual tool
+    // call establishes the Redis connection (with backoff) and the embed.
     RedisClient redis(redis_host, redis_port, ns);
-    if (!redis.connect()) {
-        std::cerr << "Failed to connect to Redis at "
-                  << redis_host << ":" << redis_port << "\n";
-        return 1;
-    }
 
     EmbeddingClient embedder(embed_host, embed_model, provider, embed_api_key);
     MemoryTools tools(redis, embedder, decay_rate);

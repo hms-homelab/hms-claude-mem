@@ -2,8 +2,27 @@
 #include <nlohmann/json.hpp>
 #include <curl/curl.h>
 #include <stdexcept>
+#include <cstdlib>
 
 using json = nlohmann::json;
+
+namespace {
+// How long Ollama keeps the embed model resident after a request.
+// Ollama wants a NUMBER of seconds (-1 == forever) or a duration STRING with
+// a unit ("24h"). A bare string "-1" is rejected ("missing unit in duration"),
+// so emit integers as JSON numbers and only pass through unit strings.
+// Default: -1 (pin in VRAM indefinitely) so calls never cold-load.
+json keepAlive() {
+    const char* v = std::getenv("OLLAMA_KEEP_ALIVE");
+    std::string s = (v && *v) ? std::string(v) : std::string("-1");
+    try {
+        size_t pos = 0;
+        long long secs = std::stoll(s, &pos);
+        if (pos == s.size()) return json(secs); // pure integer -> number
+    } catch (...) {}
+    return json(s); // duration string like "24h"
+}
+} // namespace
 
 namespace {
 size_t writeCallback(char* ptr, size_t size, size_t nmemb, std::string* data) {
@@ -57,7 +76,7 @@ std::vector<float> EmbeddingClient::embedOllama(const std::string& text) {
     // POST /api/embed  {"model":"...", "input":"..."}
     // Response: {"embeddings": [[0.1, 0.2, ...]]}
     std::string url = host_ + "/api/embed";
-    json req = {{"model", model_}, {"input", text}};
+    json req = {{"model", model_}, {"input", text}, {"keep_alive", keepAlive()}};
     std::string response = httpPost(url, req.dump());
 
     auto j = json::parse(response);

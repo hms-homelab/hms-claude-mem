@@ -3,3 +3,4 @@ build/
 *.d
 compile_commands.json
 PLAN.md
+.cache/

@@ -26,6 +26,7 @@ public:
                 const std::string& ns = "default");
     ~RedisClient();
 
+    // Single connection attempt. Returns true on success.
     bool connect();
     bool isConnected() const;
 
@@ -48,8 +49,15 @@ private:
     std::string dataKey(const std::string& key) const;
     std::string dataPrefix() const;
 
+    // Lazily (re)establish the connection with exponential backoff.
+    // Returns true if a live context is available, false after giving up.
+    bool ensureConnected();
+    // Tear down a dead/errored context so the next op reconnects.
+    void dropConnection();
+
     std::string host_;
     int port_;
     std::string namespace_;
     void* ctx_; // redisContext*
+    int max_retries_; // backoff attempts before giving up (>= 10)
 };

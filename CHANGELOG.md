@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.2.1] - 2026-06-25
+
+### Changed
+- **Lazy startup**: no Redis connect or embed warm-up during `main()`/MCP `initialize`. The handshake now returns instantly so a cold Ollama load or slow Redis round-trip can't blow Claude Code's startup timeout and mark the server disconnected. The first tool call establishes the connection.
+- **Resilient Redis**: connection is (re)established lazily with exponential backoff (100ms doubling, capped 2s) for at least 10 attempts (`REDIS_MAX_RETRIES`, never below 10) before giving up gracefully — a transient blip no longer `exit()`s the process. A dead/errored context is dropped and reconnected on the next op.
+
+### Added
+- `keep_alive` on Ollama embed requests (`OLLAMA_KEEP_ALIVE`, default `-1` = pin in VRAM forever) so the embed model never cold-loads after the first call. Integer values are sent as JSON numbers; unit strings (e.g. `24h`) are passed through.
+
+### Notes
+- All diagnostics go to stderr only; stdout stays pure JSON-RPC.
+
 ## [1.2.0] - 2026-03-06
 
 ### Added
