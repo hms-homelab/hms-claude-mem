@@ -1,5 +1,6 @@
 #include "redis_client.h"
 #include <hiredis/hiredis.h>
+#include <sys/time.h>
 #include <sstream>
 #include <cstring>
 #include <cstdlib>
@@ -50,11 +51,24 @@ bool RedisClient::connect() {
         redisFree(static_cast<redisContext*>(ctx_));
         ctx_ = nullptr;
     }
-    auto* c = redisConnect(host_.c_str(), port_);
+    // Connect timeout so a dead/unreachable .15 fails fast instead of blocking.
+    int conn_ms = std::max(1, envInt("REDIS_CONNECT_TIMEOUT_MS", 5000));
+    struct timeval conn_tv{conn_ms / 1000, (conn_ms % 1000) * 1000};
+    auto* c = redisConnectWithTimeout(host_.c_str(), port_, conn_tv);
     if (!c || c->err) {
         if (c) redisFree(c);
         return false;
     }
+    // CRITICAL: a per-command recv timeout. Without it, a silently-dead peer
+    // (Redis restart, NAT/keepalive reaping an idle socket, .15 blip) makes the
+    // next synchronous command block in recv() forever — the mem_store hang.
+    // With it, a dead socket returns a null reply, we dropConnection() and
+    // reconnect on the next attempt.
+    int cmd_ms = std::max(1, envInt("REDIS_CMD_TIMEOUT_MS", 5000));
+    struct timeval cmd_tv{cmd_ms / 1000, (cmd_ms % 1000) * 1000};
+    redisSetTimeout(c, cmd_tv);
+    // Proactively detect dead peers on idle connections.
+    redisEnableKeepAlive(c);
     ctx_ = c;
     return true;
 }
@@ -102,9 +116,6 @@ bool RedisClient::ensureConnected() {
 }
 
 bool RedisClient::vectorAdd(const std::string& key, const std::vector<float>& embedding) {
-    if (!ensureConnected()) return false;
-    auto* c = static_cast<redisContext*>(ctx_);
-
     std::string vkey = vectorKey();
     int dim = static_cast<int>(embedding.size());
     int argc = dim + 5;
@@ -127,13 +138,19 @@ bool RedisClient::vectorAdd(const std::string& key, const std::vector<float>& em
         argvlen[i] = str_args[i].size();
     }
 
-    auto* reply = static_cast<redisReply*>(
-        redisCommandArgv(c, argc, argv.data(), argvlen.data()));
-    if (!reply) { dropConnection(); return false; }
-
-    bool ok = (reply->type != REDIS_REPLY_ERROR);
-    freeReplyObject(reply);
-    return ok;
+    // Two attempts: a null reply means a stale/dead socket (now bounded by the
+    // command timeout instead of hanging), so drop and reconnect once.
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        if (!ensureConnected()) return false;
+        auto* c = static_cast<redisContext*>(ctx_);
+        auto* reply = static_cast<redisReply*>(
+            redisCommandArgv(c, argc, argv.data(), argvlen.data()));
+        if (!reply) { dropConnection(); continue; }
+        bool ok = (reply->type != REDIS_REPLY_ERROR);
+        freeReplyObject(reply);
+        return ok;
+    }
+    return false;
 }
 
 bool RedisClient::vectorRemove(const std::string& key) {
@@ -201,21 +218,23 @@ std::vector<std::pair<std::string, double>> RedisClient::vectorSearch(
 }
 
 bool RedisClient::hashSet(const std::string& key, const MemoryEntry& entry) {
-    if (!ensureConnected()) return false;
-    auto* c = static_cast<redisContext*>(ctx_);
-
     std::string hkey = dataKey(key);
     std::string pinned_str = entry.pinned ? "1" : "0";
-    auto* reply = static_cast<redisReply*>(
-        redisCommand(c, "HSET %s value %s category %s created_at %s updated_at %s pinned %s",
-                     hkey.c_str(), entry.value.c_str(), entry.category.c_str(),
-                     entry.created_at.c_str(), entry.updated_at.c_str(),
-                     pinned_str.c_str()));
-    if (!reply) { dropConnection(); return false; }
 
-    bool ok = (reply->type != REDIS_REPLY_ERROR);
-    freeReplyObject(reply);
-    return ok;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        if (!ensureConnected()) return false;
+        auto* c = static_cast<redisContext*>(ctx_);
+        auto* reply = static_cast<redisReply*>(
+            redisCommand(c, "HSET %s value %s category %s created_at %s updated_at %s pinned %s",
+                         hkey.c_str(), entry.value.c_str(), entry.category.c_str(),
+                         entry.created_at.c_str(), entry.updated_at.c_str(),
+                         pinned_str.c_str()));
+        if (!reply) { dropConnection(); continue; }
+        bool ok = (reply->type != REDIS_REPLY_ERROR);
+        freeReplyObject(reply);
+        return ok;
+    }
+    return false;
 }
 
 std::optional<MemoryEntry> RedisClient::hashGet(const std::string& key) {
