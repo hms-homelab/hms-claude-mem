@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <optional>
+#include <mutex>
 
 class RedisClient : public IMemoryStore {
 public:
@@ -33,15 +34,28 @@ private:
     std::string dataKey(const std::string& key) const;
     std::string dataPrefix() const;
 
-    // Lazily (re)establish the connection with exponential backoff.
-    // Returns true if a live context is available, false after giving up.
-    bool ensureConnected();
-    // Tear down a dead/errored context so the next op reconnects.
-    void dropConnection();
+    // ── Locking discipline ────────────────────────────────────────────────
+    // hiredis redisContext is NOT thread safe and there is exactly one per
+    // client, so every public entry point takes mutex_ for its whole duration.
+    //
+    // The internal helpers below assume the caller already holds it. That split
+    // exists because ensureConnected() calls connect() and isConnected(), which
+    // are themselves public: locking in those too would self-deadlock on a
+    // non-recursive mutex. Public connect()/isConnected() are thin locking
+    // wrappers over the *Unlocked variants.
+    //
+    // Rule: anything named *Unlocked, plus ensureConnected/dropConnection, must
+    // only ever be called with mutex_ held.
+    bool connectUnlocked();
+    bool isConnectedUnlocked() const;
+    bool ensureConnected();     // caller holds mutex_
+    void dropConnection();      // caller holds mutex_
+
+    mutable std::mutex mutex_;
 
     std::string host_;
     int port_;
     std::string namespace_;
-    void* ctx_; // redisContext*
+    void* ctx_; // redisContext*, guarded by mutex_
     int max_retries_; // backoff attempts before giving up (>= 10)
 };

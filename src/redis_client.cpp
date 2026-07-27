@@ -46,7 +46,7 @@ std::string RedisClient::dataPrefix() const {
     return "claude:mem:" + namespace_ + ":data:";
 }
 
-bool RedisClient::connect() {
+bool RedisClient::connectUnlocked() {
     if (ctx_) {
         redisFree(static_cast<redisContext*>(ctx_));
         ctx_ = nullptr;
@@ -73,9 +73,20 @@ bool RedisClient::connect() {
     return true;
 }
 
-bool RedisClient::isConnected() const {
+bool RedisClient::isConnectedUnlocked() const {
     auto* c = static_cast<redisContext*>(ctx_);
     return c != nullptr && c->err == 0;
+}
+
+// Public wrappers. See the locking discipline note in redis_client.h.
+bool RedisClient::connect() {
+    std::lock_guard<std::mutex> lk(mutex_);
+    return connectUnlocked();
+}
+
+bool RedisClient::isConnected() const {
+    std::lock_guard<std::mutex> lk(mutex_);
+    return isConnectedUnlocked();
 }
 
 void RedisClient::dropConnection() {
@@ -87,14 +98,14 @@ void RedisClient::dropConnection() {
 
 bool RedisClient::ensureConnected() {
     // Already have a healthy context.
-    if (isConnected()) return true;
+    if (isConnectedUnlocked()) return true;
     dropConnection();
 
     // Exponential backoff, capped per-attempt, giving up after max_retries_.
     int delay_ms = 100;
     const int cap_ms = 2000;
     for (int attempt = 1; attempt <= max_retries_; ++attempt) {
-        if (connect()) {
+        if (connectUnlocked()) {
             if (attempt > 1) {
                 logErr("reconnected to " + host_ + ":" + std::to_string(port_) +
                        " on attempt " + std::to_string(attempt));
@@ -116,6 +127,7 @@ bool RedisClient::ensureConnected() {
 }
 
 bool RedisClient::vectorAdd(const std::string& key, const std::vector<float>& embedding) {
+    std::lock_guard<std::mutex> lk(mutex_);
     std::string vkey = vectorKey();
     int dim = static_cast<int>(embedding.size());
     int argc = dim + 5;
@@ -154,6 +166,7 @@ bool RedisClient::vectorAdd(const std::string& key, const std::vector<float>& em
 }
 
 bool RedisClient::vectorRemove(const std::string& key) {
+    std::lock_guard<std::mutex> lk(mutex_);
     if (!ensureConnected()) return false;
     auto* c = static_cast<redisContext*>(ctx_);
 
@@ -169,6 +182,7 @@ bool RedisClient::vectorRemove(const std::string& key) {
 
 std::vector<std::pair<std::string, double>> RedisClient::vectorSearch(
     const std::vector<float>& query, int top_k) {
+    std::lock_guard<std::mutex> lk(mutex_);
 
     std::vector<std::pair<std::string, double>> results;
     if (!ensureConnected()) return results;
@@ -218,6 +232,7 @@ std::vector<std::pair<std::string, double>> RedisClient::vectorSearch(
 }
 
 bool RedisClient::hashSet(const std::string& key, const MemoryEntry& entry) {
+    std::lock_guard<std::mutex> lk(mutex_);
     std::string hkey = dataKey(key);
     std::string pinned_str = entry.pinned ? "1" : "0";
 
@@ -238,6 +253,7 @@ bool RedisClient::hashSet(const std::string& key, const MemoryEntry& entry) {
 }
 
 std::optional<MemoryEntry> RedisClient::hashGet(const std::string& key) {
+    std::lock_guard<std::mutex> lk(mutex_);
     if (!ensureConnected()) return std::nullopt;
     auto* c = static_cast<redisContext*>(ctx_);
 
@@ -267,6 +283,7 @@ std::optional<MemoryEntry> RedisClient::hashGet(const std::string& key) {
 }
 
 bool RedisClient::hashDelete(const std::string& key) {
+    std::lock_guard<std::mutex> lk(mutex_);
     if (!ensureConnected()) return false;
     auto* c = static_cast<redisContext*>(ctx_);
 
@@ -281,6 +298,7 @@ bool RedisClient::hashDelete(const std::string& key) {
 }
 
 std::vector<std::string> RedisClient::scanKeys(const std::string& pattern, int count) {
+    std::lock_guard<std::mutex> lk(mutex_);
     std::vector<std::string> keys;
     if (!ensureConnected()) return keys;
     auto* c = static_cast<redisContext*>(ctx_);
