@@ -1,4 +1,5 @@
 #include "mcp_server.h"
+#include "http_transport.h"
 #include "memory_store.h"
 #include "redis_client.h"
 #include "embedded_store.h"
@@ -82,6 +83,20 @@ int main() {
     EmbeddingClient embedder(embed_host, embed_model, provider, embed_api_key, local_model_path);
     MemoryTools tools(*store, embedder, decay_rate);
     McpServer server(tools);
+
+    // SDD-003: same object graph either way, so the two transports cannot drift.
+    // MODE=stdio (default) keeps the historical behaviour exactly.
+    if (getEnv("MODE", "stdio") == "http") {
+        HttpTransportConfig http_cfg;
+        http_cfg.bind_addr      = getEnv("BIND_ADDR", "127.0.0.1");
+        http_cfg.port           = std::stoi(getEnv("HTTP_PORT", "8901"));
+        http_cfg.auth_token     = getEnv("AUTH_TOKEN", "");
+        http_cfg.version        = HMS_CLAUDE_MEM_VERSION;
+        http_cfg.store_provider = store_provider;
+        http_cfg.embed_provider = embed_provider_str;
+        http_cfg.ns             = ns;
+        return runHttpTransport(server, http_cfg, &g_signaled);
+    }
 
     server.run();
 

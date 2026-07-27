@@ -5,6 +5,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.0] - 2026-07-26
+
+### Added
+- **HTTP daemon transport** (`MODE=http`), so one always-up process serves every
+  client instead of Claude Code spawning a binary per session. See
+  `docs/sdd/SDD-003-http-daemon-transport.md`.
+  - `POST /mcp` carries JSON-RPC, single or batched. Notifications (no `id`)
+    answer `204`, malformed bodies answer `400` with `-32700`.
+  - `GET /health` reports version, store provider, embed provider and namespace.
+  - Bearer token auth via `AUTH_TOKEN`, required in practice whenever
+    `BIND_ADDR` is not loopback. The daemon warns on startup if it is not.
+  - Stateless: `Mcp-Session-Id` is echoed if sent, otherwise ignored, so a
+    restart costs clients nothing.
+  - Config: `MODE`, `BIND_ADDR` (default `127.0.0.1`), `HTTP_PORT` (default
+    `8901`, never hardcoded), `AUTH_TOKEN`.
+- `hms-claude-mem.service.example`, a systemd unit for the daemon with Redis and
+  Ollama on loopback.
+- `third_party/httplib.h` (cpp-httplib 0.18.3), vendored so no host needs an
+  extra package. No TLS, so no OpenSSL dependency.
+- Transport parity tests: the same requests through both drivers, diffed. Fully
+  hermetic (EmbeddedStore in a temp dir), so they survive stdio being removed.
+- Redis concurrency tests: 200 concurrent writes checked for loss and
+  interleaving, mixed read/write/search traffic, and a connect race that would
+  hang if the locking were wrong.
+
+### Fixed
+- **`RedisClient` was not thread safe.** hiredis `redisContext` is not, and there
+  is one per client, so concurrent HTTP callers would corrupt it. Now guarded by
+  a single mutex, matching `EmbeddedStore` and `LocalEmbedder`. Verified by
+  reverting the mutex: the suite dies with signal 133 on the first concurrency
+  test without it. Public `connect()`/`isConnected()` became thin locking
+  wrappers over `*Unlocked` cores, because `ensureConnected()` calls both and a
+  naive lock would self-deadlock.
+- The test suite did not link (`library 'gmock' not found`): CMake linked the
+  bare name instead of the `GTest::gmock` imported target, so Homebrew's lib dir
+  was never searched.
+- All 14 `McpServerTest` cases silently skipped without a local Redis. Host and
+  embedder now come from `REDIS_HOST` / `REDIS_PORT` / `EMBED_HOST` /
+  `EMBED_MODEL`, defaulting to the previous values.
+- The reported version was a literal duplicated in `mcp_server.cpp` and
+  `CMakeLists.txt`, which had already drifted and broken a test. It now comes
+  from `PROJECT_VERSION` in one place.
+
 ## [1.3.1] - 2026-06-25
 
 ### Added

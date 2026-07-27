@@ -1,0 +1,67 @@
+# hms-claude-mem, HTTP daemon mode (SDD-003).
+#
+# Install on the host that already runs Redis and Ollama so both become loopback:
+#   sudo cp hms-claude-mem.service.example /etc/systemd/system/hms-claude-mem.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now hms-claude-mem
+#   curl http://<host>:8901/health
+#
+# Then point clients at it, replacing the stdio "command" entry in .mcp.json:
+#   "claude-mem": {
+#     "type": "http",
+#     "url": "http://<host>:8901/mcp",
+#     "headers": { "Authorization": "Bearer <token>" }
+#   }
+
+[Unit]
+Description=hms-claude-mem persistent semantic memory (MCP over HTTP)
+After=network-online.target redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/hms_claude_mem
+Restart=always
+RestartSec=2
+
+# Transport
+Environment=MODE=http
+Environment=BIND_ADDR=0.0.0.0
+Environment=HTTP_PORT=8901
+
+# AUTH_TOKEN is required whenever BIND_ADDR is not loopback. Do NOT put the
+# real token here in a committed file: use a drop-in that is not in git,
+#   sudo systemctl edit hms-claude-mem
+# and add:
+#   [Service]
+#   Environment=AUTH_TOKEN=<the token>
+# or point EnvironmentFile at a root-owned 0600 file.
+#Environment=AUTH_TOKEN=
+
+# Backend. Both are local to this host, so no network hop per call.
+Environment=STORE_PROVIDER=redis
+Environment=REDIS_HOST=127.0.0.1
+Environment=REDIS_PORT=6379
+Environment=EMBED_PROVIDER=ollama
+Environment=OLLAMA_HOST=http://127.0.0.1:11434
+Environment=EMBED_MODEL=nomic-embed-text
+
+# One shared namespace across every client (decision 8.5).
+Environment=NAMESPACE=global
+
+# Redis command/connect timeouts, so a dead socket fails fast instead of hanging.
+Environment=REDIS_CONNECT_TIMEOUT_MS=5000
+Environment=REDIS_CMD_TIMEOUT_MS=5000
+
+# Hardening. The daemon needs outbound TCP only; it writes nothing outside
+# /tmp unless STORE_PROVIDER=local, in which case give it a StateDirectory.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target

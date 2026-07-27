@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(hms-claude-mem VERSION 1.3.1 LANGUAGES CXX)
+project(hms-claude-mem VERSION 1.4.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -32,6 +32,9 @@ else()
     target_link_libraries(hms_claude_mem PRIVATE ${HIREDIS_LIB})
 endif()
 
+target_include_directories(hms_claude_mem PRIVATE ${CMAKE_SOURCE_DIR}/third_party)
+# One definition of the version: PROJECT_VERSION, not a literal in a .cpp.
+target_compile_definitions(hms_claude_mem PRIVATE HMS_CLAUDE_MEM_VERSION="${PROJECT_VERSION}")
 target_link_libraries(hms_claude_mem PRIVATE ${CURL_LIBRARIES})
 
 if(nlohmann_json_FOUND)
@@ -110,8 +113,10 @@ if(BUILD_TESTS)
     add_executable(run_tests ${TEST_SOURCES} ${LIB_SOURCES})
     target_include_directories(run_tests PRIVATE
         ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/third_party
         ${CURL_INCLUDE_DIRS}
     )
+    target_compile_definitions(run_tests PRIVATE HMS_CLAUDE_MEM_VERSION="${PROJECT_VERSION}")
     target_link_libraries(run_tests PRIVATE
         GTest::GTest
         GTest::Main

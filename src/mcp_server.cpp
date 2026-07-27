@@ -26,7 +26,7 @@ json McpServer::handleInitialize(const json& request) {
         }},
         {"serverInfo", {
             {"name", "claude-mem"},
-            {"version", "1.3.1"}
+            {"version", HMS_CLAUDE_MEM_VERSION}
         }}
     };
     return makeResponse(request["id"], result);
