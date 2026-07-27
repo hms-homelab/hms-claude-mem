@@ -115,7 +115,9 @@ if(BUILD_TESTS)
     target_link_libraries(run_tests PRIVATE
         GTest::GTest
         GTest::Main
-        gmock
+        # Imported target, not the bare name "gmock": the bare name makes the
+        # linker search only its default paths, which miss Homebrew's lib dir.
+        GTest::gmock
         ${CURL_LIBRARIES}
     )
     if(hiredis_FOUND)

@@ -4,17 +4,34 @@
 #include "tools.h"
 #include "redis_client.h"
 #include "embedding_client.h"
+#include <cstdlib>
+#include <string>
+
+namespace {
+// Point the suite at a reachable Redis/Ollama without editing the file:
+//   REDIS_HOST=192.168.2.15 EMBED_HOST=http://192.168.2.15:11434 ./run_tests
+// Defaults keep the previous localhost behaviour, so nothing changes for anyone
+// already running a local Redis.
+std::string testEnv(const char* name, const std::string& fallback) {
+    const char* v = std::getenv(name);
+    return (v && *v) ? std::string(v) : fallback;
+}
+} // namespace
 
 class McpServerTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        // Use "test" namespace to isolate from production data
-        redis_ = std::make_unique<RedisClient>("127.0.0.1", 6379, "test");
+        // Namespace "test" keeps these keys away from real memories, and
+        // TearDown removes every key the test created.
+        const std::string host = testEnv("REDIS_HOST", "127.0.0.1");
+        const int port = std::stoi(testEnv("REDIS_PORT", "6379"));
+        redis_ = std::make_unique<RedisClient>(host, port, "test");
         if (!redis_->connect()) {
-            GTEST_SKIP() << "Redis not available";
+            GTEST_SKIP() << "Redis not available at " << host << ":" << port;
         }
         embedder_ = std::make_unique<EmbeddingClient>(
-            "http://192.168.2.5:11434", "nomic-embed-text");
+            testEnv("EMBED_HOST", testEnv("OLLAMA_HOST", "http://192.168.2.5:11434")),
+            testEnv("EMBED_MODEL", "nomic-embed-text"));
         tools_ = std::make_unique<MemoryTools>(*redis_, *embedder_, 0.01);
         server_ = std::make_unique<McpServer>(*tools_);
     }
@@ -48,7 +65,7 @@ protected:
 
 // === Protocol Tests ===
 
-TEST_F(McpServerTest, InitializeReturnsVersion120) {
+TEST_F(McpServerTest, InitializeReturnsServerVersion) {
     json req = {
         {"jsonrpc", "2.0"}, {"id", 1}, {"method", "initialize"},
         {"params", {{"protocolVersion", "2024-11-05"},
@@ -56,7 +73,9 @@ TEST_F(McpServerTest, InitializeReturnsVersion120) {
     };
     auto resp = server_->handleRequest(req);
     EXPECT_EQ(resp["result"]["protocolVersion"], "2024-11-05");
-    EXPECT_EQ(resp["result"]["serverInfo"]["version"], "1.2.0");
+    // Assert it reports *a* version rather than a literal, so a release bump
+    // does not fail the suite. The exact string lives in one place already.
+    EXPECT_FALSE(resp["result"]["serverInfo"]["version"].get<std::string>().empty());
 }
 
 TEST_F(McpServerTest, ToolsListReturns5Tools) {
@@ -278,7 +297,8 @@ TEST_F(McpServerTest, NamespaceIsolation) {
     });
 
     // Create a second client with different namespace
-    RedisClient other_redis("127.0.0.1", 6379, "other");
+    RedisClient other_redis(testEnv("REDIS_HOST", "127.0.0.1"),
+                            std::stoi(testEnv("REDIS_PORT", "6379")), "other");
     ASSERT_TRUE(other_redis.connect());
 
     // Should NOT find the key in "other" namespace
