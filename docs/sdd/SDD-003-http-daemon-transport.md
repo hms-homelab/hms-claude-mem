@@ -22,11 +22,14 @@ talks JSON-RPC over stdin/stdout. That has three consequences we hit in practice
    returned `MCP error -32000: Connection closed`; a retry worked, but later the server
    dropped out of the session entirely and `mem_search` / `mem_store` were unavailable
    for the rest of it. Nothing was lost (Redis on `.15` held all 880 keys), but the
-   assistant was blind to memory from that point on. Caveat on this one: the binary in
-   use was built 2026-07-17 22:14, **47 minutes before** commit `28f8643` "bound Redis
-   commands with a timeout so a dead socket can't hang mem_store forever". It was never
-   rebuilt, so this specific failure may already be fixed in source. Rebuild and observe
-   before treating it as a motivation for the daemon.
+   assistant was blind to memory from that point on. Checked whether this was simply a
+   stale binary missing commit `28f8643` ("bound Redis commands with a timeout so a dead
+   socket can't hang mem_store forever"): it is not. `strings build/hms_claude_mem`
+   contains both `REDIS_CONNECT_TIMEOUT_MS` and `REDIS_CMD_TIMEOUT_MS`, so the running
+   binary already had the timeout fix and the failure happened anyway. Comparing mtimes
+   suggested otherwise and was misleading, since a commit does not touch working-tree
+   timestamps. Root cause of the drop is therefore still unexplained, which is itself an
+   argument for a supervised long-lived process over a per-session child.
 3. **It is Mac-local.** Every machine that wants memory needs the binary, the model or
    Ollama reachability, and Redis reachability. OpenClaw on `.72`, the VPS, and any
    future host each repeat that setup.
