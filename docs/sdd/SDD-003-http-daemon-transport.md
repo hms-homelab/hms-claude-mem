@@ -11,14 +11,22 @@
 talks JSON-RPC over stdin/stdout. That has three consequences we hit in practice on
 2026-07-26:
 
-1. **Process per session, and orphans.** Four `hms_claude_mem` processes were alive on
-   the M5 at once: one live, plus strays dating from the previous Saturday and Wednesday.
-   Sessions that do not exit cleanly leave the child behind.
+1. **A process per session, accumulating with long-lived clients.** Four
+   `hms_claude_mem` processes were alive on the M5 at once, dating back several days.
+   Investigated: these are **not orphans and not a leak**. Each has a live parent
+   (`claude bg-spare` daemons from Jul 21, 22 and 24) and is correctly blocked reading
+   stdin, exactly as designed. The cost is structural rather than buggy: one resident
+   process per client session, each with its own store handle and embedder, for as long
+   as any Claude Code daemon lives.
 2. **The connection can die mid-session and there is no recovery.** A `mem_store` call
    returned `MCP error -32000: Connection closed`; a retry worked, but later the server
    dropped out of the session entirely and `mem_search` / `mem_store` were unavailable
    for the rest of it. Nothing was lost (Redis on `.15` held all 880 keys), but the
-   assistant was blind to memory from that point on.
+   assistant was blind to memory from that point on. Caveat on this one: the binary in
+   use was built 2026-07-17 22:14, **47 minutes before** commit `28f8643` "bound Redis
+   commands with a timeout so a dead socket can't hang mem_store forever". It was never
+   rebuilt, so this specific failure may already be fixed in source. Rebuild and observe
+   before treating it as a motivation for the daemon.
 3. **It is Mac-local.** Every machine that wants memory needs the binary, the model or
    Ollama reachability, and Redis reachability. OpenClaw on `.72`, the VPS, and any
    future host each repeat that setup.
@@ -220,7 +228,10 @@ that way: `.15` is crowded, with `8877`, `8888`, `8889`, `8890`, `8891`, `8892`,
 and `8895` through `8899` all bound as of 2026-07-26. `8901` was verified free. Nothing in
 the code or the unit file may hardcode it.
 
-**8.7 Orphan cleanup: separate fix, landing first.** Independent of the daemon, so it
-stops strays accumulating during the stdio-to-http transition. `installShutdownSignals()`
-already exists and likely just needs parent-death handling. Ships as its own commit
-before the daemon work.
+**8.7 Orphan cleanup: DROPPED, there is no bug.** Investigated on 2026-07-26. The
+long-lived `hms_claude_mem` processes are not orphans: each has a live `claude bg-spare`
+parent and is correctly blocked on `std::getline(std::cin, ...)`, which is exactly what
+the stdio contract requires. `ps` showed `PPID` values pointing at running processes, not
+`1`, and `lsof` showed no held sockets. Nothing in this repo leaks. The accumulation is a
+property of Claude Code keeping background daemons alive across days, and it resolves on
+its own when the daemon transport removes the process-per-session model entirely.
