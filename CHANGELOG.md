@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.0] - 2026-07-26
+
+### Removed
+- **The stdio transport.** `McpServer::run()` and its stdin/stdout loop are gone;
+  HTTP is the only transport (SDD-003 stage 9). This is why the major version
+  moved: any client configured with `"command"` will stop working and must move
+  to `"type": "http"`.
+- `MODE` is still read, so an old `MODE=stdio` config exits 2 with an explanatory
+  message instead of silently starting a listener nobody is talking to.
+
+### Changed
+- `MODE` now defaults to `http`, so running the binary with no environment starts
+  the daemon on `127.0.0.1:8901` instead of waiting on stdin.
+- README client examples use `"type": "http"`. Backend settings live on the
+  daemon now, not duplicated into every client config.
+
 ## [1.4.0] - 2026-07-26
 
 ### Added

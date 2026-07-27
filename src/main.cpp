@@ -6,6 +6,7 @@
 #include "embedding_client.h"
 #include "tools.h"
 #include <csignal>
+#include <iostream>
 #include <cstdlib>
 #include <memory>
 #include <string>
@@ -84,9 +85,17 @@ int main() {
     MemoryTools tools(*store, embedder, decay_rate);
     McpServer server(tools);
 
-    // SDD-003: same object graph either way, so the two transports cannot drift.
-    // MODE=stdio (default) keeps the historical behaviour exactly.
-    if (getEnv("MODE", "stdio") == "http") {
+    // SDD-003 stage 9: stdio is gone, HTTP is the only transport. MODE is still
+    // read so an old stdio config fails loudly instead of silently listening.
+    const std::string mode = getEnv("MODE", "http");
+    if (mode != "http") {
+        std::cerr << "hms_claude_mem: MODE=" << mode << " is no longer supported. "
+                     "The stdio transport was removed in 2.0.0; run the HTTP daemon "
+                     "and point clients at http://<host>:<HTTP_PORT>/mcp instead."
+                  << std::endl;
+        return 2;
+    }
+    {
         HttpTransportConfig http_cfg;
         http_cfg.bind_addr      = getEnv("BIND_ADDR", "127.0.0.1");
         http_cfg.port           = std::stoi(getEnv("HTTP_PORT", "8901"));
@@ -95,11 +104,7 @@ int main() {
         http_cfg.store_provider = store_provider;
         http_cfg.embed_provider = embed_provider_str;
         http_cfg.ns             = ns;
+        // store's destructor still flushes pending writes on the way out.
         return runHttpTransport(server, http_cfg, &g_signaled);
     }
-
-    server.run();
-
-    // store's destructor flushes any pending writes (EmbeddedStore write-back).
-    return 0;
 }

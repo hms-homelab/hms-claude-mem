@@ -1,5 +1,4 @@
 #include "mcp_server.h"
-#include <iostream>
 #include <string>
 
 McpServer::McpServer(MemoryTools& tools) : tools_(tools) {}
@@ -154,29 +153,5 @@ json McpServer::handleRequest(const json& request) {
     } else {
         return makeError(request.value("id", json(nullptr)), -32601,
                          "Method not found: " + method);
-    }
-}
-
-void McpServer::run() {
-    std::string line;
-    while (std::getline(std::cin, line)) {
-        if (line.empty()) continue;
-
-        try {
-            auto request = json::parse(line);
-            auto response = handleRequest(request);
-            if (!response.is_null()) {
-                std::cout << response.dump() << "\n";
-                std::cout.flush();
-            }
-        } catch (const json::exception& e) {
-            json err = makeError(nullptr, -32700, std::string("Parse error: ") + e.what());
-            std::cout << err.dump() << "\n";
-            std::cout.flush();
-        } catch (const std::exception& e) {
-            json err = makeError(nullptr, -32603, std::string("Internal error: ") + e.what());
-            std::cout << err.dump() << "\n";
-            std::cout.flush();
-        }
     }
 }

@@ -1,6 +1,6 @@
 # SDD-003: Always-up HTTP daemon transport
 
-**Status:** Accepted (decisions locked 2026-07-26)
+**Status:** Implemented (stages 0-9 complete 2026-07-26)
 **Author:** Albin + Claude
 **Date:** 2026-07-26
 **Target version:** 1.4.0 (new transport, backward compatible)
@@ -190,7 +190,7 @@ auth accept/reject, batching, and stdio/http parity.
 4. systemd unit on `.15`, run it alongside the existing stdio setup.
 5. Switch the M5 `.mcp.json` to `type: http`, keep the stdio entry commented for fallback.
 6. Point `.72` and any other host at the same daemon.
-7. Once proven, delete `run()` and the stdio driver (8.3), leaving one code path.
+7. Once proven, delete `run()` and the stdio driver (8.3), leaving one code path. **Done in 2.0.0.**
 
 Stage 5 is the only one that changes day-to-day behaviour, and it is one line to revert.
 Stage 7 is the point of no return, so it should wait until the daemon has run without

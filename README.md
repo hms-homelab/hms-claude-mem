@@ -23,8 +23,15 @@ A Redis-backed semantic memory system that Claude manages itself:
 2. **Search** semantically when it needs context later ("how do I deploy to the Pi?" finds the right memory even if those exact words were never stored)
 3. **Retrieve** only what's relevant, in small surgical batches
 
+> **2.0.0 removed the stdio transport.** The server is now an always-up HTTP
+> daemon: one process serves every client instead of one child process per
+> Claude Code session. Clients use `"type": "http"` rather than `"command"`.
+> Backend settings (`STORE_PROVIDER`, `REDIS_HOST`, `EMBED_PROVIDER`, ...) now
+> live on the daemon, not in each client's config. See
+> `hms-claude-mem.service.example` and `docs/sdd/SDD-003-http-daemon-transport.md`.
+
 ```
-Claude Code  <──stdio JSON-RPC──>  hms_claude_mem (C++ binary)
+Claude Code  <──HTTP JSON-RPC──>  hms_claude_mem daemon (C++ binary)
                                         │
                                         ├── Storage
                                         │    ├── Local (default) — in-process vector index + local file, write-back persisted
@@ -158,12 +165,9 @@ Add to `.mcp.json` in your project root. Memories are isolated to this project:
 {
   "mcpServers": {
     "claude-mem": {
-      "command": "/path/to/build/hms_claude_mem",
-      "args": [],
-      "env": {
-        "NAMESPACE": "my-project",
-        "DECAY_RATE": "0.01"
-      }
+      "type": "http",
+      "url": "http://127.0.0.1:8901/mcp",
+      "headers": { "Authorization": "Bearer <AUTH_TOKEN>" }
     }
   }
 }
@@ -176,19 +180,9 @@ Embedded store file lives at `~/.hms-claude-mem/store/<namespace>.db` (override 
 {
   "mcpServers": {
     "claude-mem": {
-      "command": "/path/to/build/hms_claude_mem",
-      "args": [],
-      "env": {
-        "STORE_PROVIDER": "redis",
-        "REDIS_HOST": "127.0.0.1",
-        "REDIS_PORT": "6379",
-        "EMBED_PROVIDER": "ollama",
-        "EMBED_HOST": "http://localhost:11434",
-        "EMBED_MODEL": "nomic-embed-text",
-        "EMBED_API_KEY": "",
-        "NAMESPACE": "my-project",
-        "DECAY_RATE": "0.01"
-      }
+      "type": "http",
+      "url": "http://127.0.0.1:8901/mcp",
+      "headers": { "Authorization": "Bearer <AUTH_TOKEN>" }
     }
   }
 }
@@ -199,18 +193,9 @@ Embedded store file lives at `~/.hms-claude-mem/store/<namespace>.db` (override 
 {
   "mcpServers": {
     "claude-mem": {
-      "command": "/path/to/build/hms_claude_mem",
-      "args": [],
-      "env": {
-        "REDIS_HOST": "127.0.0.1",
-        "REDIS_PORT": "6379",
-        "EMBED_PROVIDER": "openai",
-        "EMBED_HOST": "https://api.openai.com",
-        "EMBED_MODEL": "text-embedding-3-small",
-        "EMBED_API_KEY": "sk-...",
-        "NAMESPACE": "my-project",
-        "DECAY_RATE": "0.01"
-      }
+      "type": "http",
+      "url": "http://127.0.0.1:8901/mcp",
+      "headers": { "Authorization": "Bearer <AUTH_TOKEN>" }
     }
   }
 }
@@ -224,17 +209,9 @@ Add to `~/.claude/settings.json` so Claude remembers across every project:
 {
   "mcpServers": {
     "claude-mem": {
-      "command": "/path/to/build/hms_claude_mem",
-      "args": [],
-      "env": {
-        "REDIS_HOST": "127.0.0.1",
-        "REDIS_PORT": "6379",
-        "EMBED_PROVIDER": "ollama",
-        "EMBED_HOST": "http://localhost:11434",
-        "EMBED_MODEL": "nomic-embed-text",
-        "NAMESPACE": "global",
-        "DECAY_RATE": "0.01"
-      }
+      "type": "http",
+      "url": "http://127.0.0.1:8901/mcp",
+      "headers": { "Authorization": "Bearer <AUTH_TOKEN>" }
     }
   }
 }
@@ -338,7 +315,7 @@ hms-claude-mem/
 ├── VERSION                 # Semantic version
 ├── CHANGELOG.md
 ├── src/
-│   ├── main.cpp            # Env config, wiring, stdio loop
+│   ├── main.cpp            # Env config, wiring, transport dispatch
 │   ├── mcp_server.cpp/h    # JSON-RPC 2.0 MCP protocol handler
 │   ├── redis_client.cpp/h  # hiredis wrapper (VADD, VSIM, HSET, SCAN)
 │   ├── embedding_client.cpp/h  # Multi-provider embedding client (Ollama, OpenAI)

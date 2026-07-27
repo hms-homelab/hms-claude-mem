@@ -13,8 +13,6 @@ public:
     // Process a JSON-RPC request and return a response
     json handleRequest(const json& request);
 
-    // Run the stdio loop (blocks until EOF)
-    void run();
 
 private:
     json handleInitialize(const json& request);
