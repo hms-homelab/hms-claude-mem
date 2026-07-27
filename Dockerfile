@@ -13,6 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY CMakeLists.txt VERSION ./
 COPY src/ src/
+# Vendored single-header cpp-httplib, needed by src/http_transport.cpp.
+COPY third_party/ third_party/
 
 # Configure fetches llama.cpp and downloads the bundled GGUF (SHA256-verified)
 # into build/models. WITH_LOCAL_EMBED is ON by default.
