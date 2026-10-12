@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.1] - 2026-10-12
+
+### Fixed
+- **The Docker image would not start.** The runtime stage lacked `libgomp1`, which
+  the bundled llama.cpp embedder links, so the binary exited at load with
+  `libgomp.so.1: cannot open shared object file`.
+- **The image and the release binaries crashed on the first embedding on many
+  CPUs.** llama.cpp was built with its default `GGML_NATIVE=ON`, i.e. for the
+  GitHub runner's CPU; on an AVX2-only AMD EPYC the daemon died with an illegal
+  instruction (exit 132). Builds are now portable by default (x86: AVX/AVX2/FMA/F16C).
+- The transport parity tests used a fixed port (18901) and failed on any host
+  where something else listened there; they now take a free port from the kernel.
+
+### Added
+- `HMS_NATIVE_CPU` CMake option (default `OFF`): turn it on only for a binary that
+  runs on the machine that built it.
+
 ## [2.0.0] - 2026-07-26
 
 ### Removed

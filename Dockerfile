@@ -26,9 +26,14 @@ RUN mkdir build && cd build \
 # Runtime
 FROM debian:trixie-slim
 
+# libgomp1: llama.cpp (the bundled embedder) links OpenMP. Without it the
+# binary does not start at all ("libgomp.so.1: cannot open shared object
+# file"), which is how the 2.0.0 image shipped. (Its other 2.0.0 fault, a
+# runner-CPU-tuned llama.cpp, is fixed in CMakeLists.txt: HMS_NATIVE_CPU.)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libhiredis-dev \
     libcurl4-openssl-dev \
+    libgomp1 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd -r -s /bin/false claude-mem
 

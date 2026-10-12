@@ -16,6 +16,11 @@
 #include "tools.h"
 #include "httplib.h"
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
 #include <csignal>
 #include <cstdio>
 #include <filesystem>
@@ -25,11 +30,30 @@
 
 namespace {
 
-constexpr int kParityPort = 18901;
+// A port nobody holds right now, from the kernel. A fixed port (18901) failed
+// all five tests on a host where another service already listened there and
+// answered with HTML.
+int freePort() {
+    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return 0;
+    sockaddr_in a{};
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    a.sin_port = 0;
+    socklen_t len = sizeof(a);
+    int port = 0;
+    if (::bind(fd, reinterpret_cast<sockaddr*>(&a), sizeof(a)) == 0 &&
+        ::getsockname(fd, reinterpret_cast<sockaddr*>(&a), &len) == 0)
+        port = ntohs(a.sin_port);
+    ::close(fd);
+    return port;
+}
 
 class TransportParityTest : public ::testing::Test {
 protected:
     void SetUp() override {
+        kParityPort = freePort();
+        ASSERT_GT(kParityPort, 0) << "no free loopback port";
         dir_ = std::filesystem::temp_directory_path() /
                ("hms-parity-" + std::to_string(::getpid()));
         std::filesystem::create_directories(dir_);
@@ -82,6 +106,7 @@ protected:
     std::unique_ptr<MemoryTools> tools_;
     std::unique_ptr<McpServer> server_;
     HttpTransportConfig cfg_;
+    int kParityPort = 0;
     volatile sig_atomic_t stop_ = 0;
     std::thread http_;
 };

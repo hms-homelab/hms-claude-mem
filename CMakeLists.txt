@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(hms-claude-mem VERSION 2.0.0 LANGUAGES CXX)
+project(hms-claude-mem VERSION 2.0.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -50,6 +50,12 @@ endif()
 # WITH_LOCAL_EMBED=OFF builds a lean Ollama/OpenAI-only binary (no llama link).
 # ---------------------------------------------------------------------------
 option(WITH_LOCAL_EMBED "Build in-process llama.cpp embeddings" ON)
+# OFF by default: llama.cpp's own default (GGML_NATIVE=ON) compiles for the
+# BUILD machine's CPU, so the 2.0.0 image built on a GitHub runner died with an
+# illegal instruction (exit 132) on the first embedding on an AVX2-only EPYC.
+# Off, x86 gets the portable AVX/AVX2/FMA/F16C set; arm64 is unaffected. Turn
+# it on only for a binary that runs on the machine that built it.
+option(HMS_NATIVE_CPU "Tune llama.cpp for the build machine's CPU (not portable)" OFF)
 set(HMS_LLAMA_TAG "b9789" CACHE STRING "Pinned llama.cpp release tag")
 set(HMS_MODEL_FILE "nomic-embed-text-v1.5.Q8_0.gguf")
 set(HMS_MODEL_URL  "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/${HMS_MODEL_FILE}")
@@ -64,6 +70,7 @@ if(WITH_LOCAL_EMBED)
     set(LLAMA_BUILD_COMMON   OFF CACHE BOOL "" FORCE)  # we only use public llama.h
     set(LLAMA_CURL           OFF CACHE BOOL "" FORCE)  # don't pull a second curl/ssl stack
     set(BUILD_SHARED_LIBS    OFF CACHE BOOL "" FORCE)  # static-link llama+ggml into our binary
+    set(GGML_NATIVE ${HMS_NATIVE_CPU} CACHE BOOL "" FORCE)
     if(APPLE)
         set(GGML_METAL      ON CACHE BOOL "" FORCE)
         set(GGML_ACCELERATE ON CACHE BOOL "" FORCE)
