@@ -6,8 +6,8 @@
 // distribution and PASS/FAIL at the 0.98 p5 gate. Read-only against Redis.
 //
 // Build:  cmake -B build -DWITH_LOCAL_EMBED=ON -DBUILD_PARITY_BENCH=ON && cmake --build build --target parity_bench
-// Run:    REDIS_HOST=192.168.2.15 NAMESPACE=global \
-//         EMBED_HOST=http://192.168.2.15:11434 \
+// Run:    REDIS_HOST=hub.local NAMESPACE=global \
+//         EMBED_HOST=http://hub.local:11434 \
 //         LOCAL_EMBED_MODEL=/path/to/nomic-embed-text-v1.5.Q8_0.gguf \
 //         ./build/parity_bench [sample_size]
 
@@ -42,10 +42,10 @@ double cosine(const std::vector<float>& a, const std::vector<float>& b) {
 } // namespace
 
 int main(int argc, char** argv) {
-    std::string redis_host = getEnv("REDIS_HOST", "192.168.2.15");
+    std::string redis_host = getEnv("REDIS_HOST", "127.0.0.1");
     int redis_port = std::stoi(getEnv("REDIS_PORT", "6379"));
     std::string ns = getEnv("NAMESPACE", "global");
-    std::string embed_host = getEnv("EMBED_HOST", "http://192.168.2.15:11434");
+    std::string embed_host = getEnv("EMBED_HOST", "http://localhost:11434");
     std::string embed_model = getEnv("EMBED_MODEL", "nomic-embed-text");
     std::string local_model = getEnv("LOCAL_EMBED_MODEL", "");
     int sample = (argc > 1) ? std::atoi(argv[1]) : 200;

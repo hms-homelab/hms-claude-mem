@@ -9,7 +9,7 @@
 
 namespace {
 // Point the suite at a reachable Redis/Ollama without editing the file:
-//   REDIS_HOST=192.168.2.15 EMBED_HOST=http://192.168.2.15:11434 ./run_tests
+//   REDIS_HOST=hub.local EMBED_HOST=http://hub.local:11434 ./run_tests
 // Defaults keep the previous localhost behaviour, so nothing changes for anyone
 // already running a local Redis.
 std::string testEnv(const char* name, const std::string& fallback) {
@@ -30,7 +30,7 @@ protected:
             GTEST_SKIP() << "Redis not available at " << host << ":" << port;
         }
         embedder_ = std::make_unique<EmbeddingClient>(
-            testEnv("EMBED_HOST", testEnv("OLLAMA_HOST", "http://192.168.2.5:11434")),
+            testEnv("EMBED_HOST", testEnv("OLLAMA_HOST", "http://localhost:11434")),
             testEnv("EMBED_MODEL", "nomic-embed-text"));
         tools_ = std::make_unique<MemoryTools>(*redis_, *embedder_, 0.01);
         server_ = std::make_unique<McpServer>(*tools_);

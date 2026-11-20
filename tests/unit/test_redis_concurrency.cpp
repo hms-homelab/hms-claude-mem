@@ -6,7 +6,7 @@
 // many threads and assert nothing is lost, corrupted, or crashed.
 //
 // Point at a reachable Redis, same as the rest of the suite:
-//   REDIS_HOST=192.168.2.15 ./run_tests
+//   REDIS_HOST=hub.local ./run_tests
 // Uses the isolated "concurrency" namespace and removes every key it creates.
 
 #include <gtest/gtest.h>

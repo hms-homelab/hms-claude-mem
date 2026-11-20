@@ -5,7 +5,7 @@
 // written to a throwaway namespace and removed afterward.
 //
 // Build: cmake -B build -DBUILD_STORE_PARITY=ON && cmake --build build --target store_parity_bench
-// Run:   REDIS_HOST=192.168.2.15 ./build/store_parity_bench [N] [Q] [top_k]
+// Run:   REDIS_HOST=hub.local ./build/store_parity_bench [N] [Q] [top_k]
 
 #include "embedded_store.h"
 #include "redis_client.h"
@@ -37,7 +37,7 @@ std::vector<float> randUnit(std::mt19937& rng, int dim) {
 } // namespace
 
 int main(int argc, char** argv) {
-    std::string host = getEnv("REDIS_HOST", "192.168.2.15");
+    std::string host = getEnv("REDIS_HOST", "127.0.0.1");
     int port = std::stoi(getEnv("REDIS_PORT", "6379"));
     int N = argc > 1 ? std::atoi(argv[1]) : 300;
     int Q = argc > 2 ? std::atoi(argv[2]) : 30;

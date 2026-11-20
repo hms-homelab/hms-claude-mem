@@ -81,8 +81,8 @@ The work that is genuinely new is concurrency (section 5.3), not MCP plumbing.
 Runtime config in use on the M5 today (`cool_shit/.mcp.json`):
 
 ```
-STORE_PROVIDER=redis   REDIS_HOST=192.168.2.15
-EMBED_PROVIDER=ollama  OLLAMA_HOST=http://192.168.2.15:11434
+STORE_PROVIDER=redis   REDIS_HOST=hub.local
+EMBED_PROVIDER=ollama  OLLAMA_HOST=http://hub.local:11434
 EMBED_MODEL=nomic-embed-text   NAMESPACE=global
 ```
 
@@ -164,7 +164,7 @@ Redis and Ollama both become loopback, removing two network hops per call.
 Client registration then becomes, in `.mcp.json`:
 
 ```json
-"claude-mem": { "type": "http", "url": "http://192.168.2.15:8901/mcp" }
+"claude-mem": { "type": "http", "url": "http://hub.local:8901/mcp" }
 ```
 
 which is the same shape the `atlassian` entry already uses.
