@@ -5,11 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [3.0.0] - 2026-11-20
 
-### 3.0.0
-
-#### Added
+### Added
 - **Recipes** (SDD-004): named, ready-to-run scripts shared by every session,
   served beside the memories by the same JSON-RPC handler. New tools
   `recipe_create`, `recipe_update`, `recipe_delete`, `recipe_get`,
@@ -37,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `<language>: <name>. <description> [tags]`; only a change of name,
   description or tags re-embeds.
 
-#### Changed
+### Changed
 - The embedded store file format gains version 2 (records with fields), used
   only by `recipes.db`. Memory files are still written as version 1.
 - The daemon refuses to start (exit 2) when the memory store file would be the
