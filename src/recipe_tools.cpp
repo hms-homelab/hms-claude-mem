@@ -424,10 +424,11 @@ json RecipeTools::update(const json& args) {
     if (!changed && !verified) return {{"error", "Nothing to update: give at least one field or verified: true"}};
     r["updated_at"] = now();
 
-    // Re-embed only when what the vector stands for moved: name, description
-    // or tags (SDD-004 section 5). A script change keeps the vector.
+    // Re-embed only when what the vector stands for moved: everything in the
+    // embedded text (language, name, description, tags; SDD-004 section 6).
+    // A script change keeps the vector.
     bool reembed = r["name"] != (*cur)["name"] || r["description"] != (*cur)["description"] ||
-                   r["tags"] != (*cur)["tags"];
+                   r["tags"] != (*cur)["tags"] || r["language"] != (*cur)["language"];
     std::vector<float> emb;
     if (reembed) {
         try {
@@ -501,7 +502,9 @@ json RecipeTools::search(const json& args) {
     auto matches = [&](const json& r) {
         if (!tag.empty() && !contains(r["tags"], tag)) return false;
         if (!language.empty() && r["language"] != language) return false;
-        if (!runs_on.empty() && !contains(r["runs_on"], runs_on)) return false;
+        // A recipe that runs on "any" host matches every runs_on filter.
+        if (!runs_on.empty() && !contains(r["runs_on"], runs_on) && !contains(r["runs_on"], "any"))
+            return false;
         if (has_mutates && r["mutates"].get<bool>() != mutates) return false;
         return true;
     };

@@ -279,6 +279,28 @@ TEST_P(RecipeTest, ReembedsOnTagsChange) {
     EXPECT_EQ(embedder_.calls, 2);
 }
 
+TEST_P(RecipeTest, ReembedsOnLanguageChange) {
+    // The language is part of the embedded text, so a stale vector would
+    // rank the recipe under its old language.
+    ASSERT_FALSE(isError(call("recipe_create", baseRecipe("lang"))));
+    ASSERT_FALSE(isError(call("recipe_update", {{"name", "lang"}, {"language", "python"}})));
+    EXPECT_EQ(embedder_.calls, 2);
+}
+
+TEST_P(RecipeTest, RunsOnAnyMatchesEveryHostFilter) {
+    auto rec = baseRecipe("anywhere");
+    rec["runs_on"] = {"any"};
+    ASSERT_FALSE(isError(call("recipe_create", rec)));
+    auto hub_only = baseRecipe("hub-only");
+    hub_only["runs_on"] = {"hub"};
+    ASSERT_FALSE(isError(call("recipe_create", hub_only)));
+
+    auto r = call("recipe_search", {{"runs_on", "mac"}});
+    ASSERT_EQ(r["count"], 1);
+    EXPECT_EQ(r["results"][0]["name"], "anywhere");
+    EXPECT_EQ(call("recipe_search", {{"runs_on", "hub"}})["count"], 2);
+}
+
 TEST_P(RecipeTest, RenameReembedsAndMoves) {
     ASSERT_FALSE(isError(call("recipe_create", baseRecipe("old-name"))));
     auto u = call("recipe_update", {{"name", "old-name"}, {"new_name", "new-name"}});
