@@ -68,6 +68,65 @@ Searching for "how do I push code to the Pi" will find this memory via cosine si
 | `mem_get` | Exact key lookup. Returns value, category, timestamps. |
 | `mem_delete` | Removes from both vectorset and hash. |
 | `mem_list` | Lists all keys, optionally filtered by category. |
+| `recipe_create` | Store a recipe: a named, ready-to-run script. Refuses an existing name and a script over 64 KB. |
+| `recipe_update` | Change only the fields given; `verified: true` stamps `verified_at` with today; `new_name` renames. |
+| `recipe_delete` | Delete a recipe by exact name. |
+| `recipe_get` | The whole recipe, script included, by exact name. |
+| `recipe_search` | Exact (`name`), filters (`tag`, `language`, `runs_on`, `mutates`), or semantic (`query`, then the filters). Results leave the script out. |
+
+## Recipes
+
+A recipe is a script stored with the shape a script has: where it runs, what it
+takes, what it needs first, whether it changes anything, and when it was last
+seen working. Every session that reaches the server sees the same recipes. See
+[`docs/sdd/SDD-004-recipes.md`](docs/sdd/SDD-004-recipes.md).
+
+| Field | Required | Meaning |
+|---|---|---|
+| `name` | yes | Unique kebab-case key, e.g. `ingest-nights-for-user` |
+| `description` | yes | What it does and when to use it. Embedded for search. |
+| `language` | yes | `bash`, `zsh`, `sql`, `python`, `powershell`, `js`, ... |
+| `script` | yes | The script, runnable once `{{param}}` placeholders are filled. Max 64 KB. |
+| `runs_on` | yes | Host labels: `mac`, `hub`, `vps`, `windows`, `docker`, `any` |
+| `mutates` | yes | `true` if it changes data or a live system. Never assumed: the caller says. |
+| `params` | no | `[{name, description, example}]`; the script refers to each as `{{name}}` |
+| `prereqs` | no | List of what must be true first (tools, a secrets file by variable name, a tunnel) |
+| `tags` | no | Free labels for exact filtering |
+| `verified_at` | auto | Set by `recipe_update` with `verified: true` |
+| `created_at`, `updated_at` | auto | As for memories |
+
+Rules, also carried in the tool descriptions:
+
+- **No secrets.** A recipe names the secrets file and variable it reads
+  (`source ~/.secrets; $SERVICE_TOKEN`), never a value. The server refuses a
+  `recipe_create` / `recipe_update` whose `script`, `prereqs` or `params` look
+  like they hold one: well-known key prefixes (AWS, GitHub, Stripe, Slack,
+  OpenAI, Anthropic, Google, PEM private key blocks) and a long opaque literal
+  assigned to a name containing `password`, `secret`, `token` or `key`. The
+  refusal names the field and line and never repeats the value. `$VAR`,
+  `${VAR}` and `{{param}}` references pass.
+- **`mutates: true` changes nothing about permission.** The session still asks
+  before running it.
+- **Fix a broken recipe in place** with `recipe_update` once the fix is proven.
+- **Search before writing a script**; `recipe_create` one that worked and will
+  be needed again.
+
+The server stores and returns recipes; it never runs them. There is no version
+history: a bad update is fixed by another update.
+
+**Storage.** Recipes are a second pool, apart from memories: no `mem_*` tool
+sees a recipe and no `recipe_*` tool sees a memory.
+
+- Redis: `claude:recipe:vectors` (vector set) and `claude:recipe:data:<name>`
+  (hash, one field per recipe field, lists as JSON). Not under
+  `claude:mem:<namespace>:`, so every server shares one pool whatever its
+  `NAMESPACE`.
+- Embedded store: `recipes.db` beside the namespace file (with `STORE_PATH`,
+  in that file's directory).
+
+The embedded text is `<language>: <name>. <description> [tags]`; the script is
+not embedded. Changing `name`, `description` or `tags` re-embeds; any other
+change keeps the vector.
 
 ## Prerequisites
 
@@ -134,6 +193,11 @@ cmake .. -DWITH_LOCAL_EMBED=OFF
 cd build
 ./run_tests
 ```
+
+The recipe suite (`tests/unit/test_recipes.cpp`) needs neither: it runs every
+case against the embedded store in a temp dir, and again against Redis when one
+answers at `REDIS_HOST`/`REDIS_PORT`, under a throwaway `claude:test:recipe:<pid>:`
+prefix it removes afterwards. Its embedder is an offline stand-in.
 
 ## Configuration
 

@@ -22,7 +22,11 @@ namespace fs = std::filesystem;
 
 namespace {
 constexpr char kMagic[4] = {'H', 'C', 'M', '1'};
+// v1: memories. v2 adds each record's fields map (SDD-004 recipes). A store
+// whose records carry no fields (every memory store) is still written as v1, so
+// a memory file stays readable by older binaries.
 constexpr uint32_t kVersion = 1;
+constexpr uint32_t kVersionFields = 2;
 
 void logErr(const std::string& msg) {
     std::cerr << "[claude-mem][store] " << msg << "\n";
@@ -104,9 +108,18 @@ EmbeddedStore::~EmbeddedStore() {
     flushNow(); // final durability on clean shutdown
 }
 
+std::string EmbeddedStore::pathFor(const std::string& ns, const std::string& path_override) {
+    if (!path_override.empty()) return path_override;
+    return (fs::path(homeDir()) / ".hms-claude-mem" / "store" / (ns + ".db")).string();
+}
+
+std::string EmbeddedStore::recipesPathBeside(const std::string& ns,
+                                             const std::string& path_override) {
+    return (fs::path(pathFor(ns, path_override)).parent_path() / "recipes.db").string();
+}
+
 std::string EmbeddedStore::resolvePath() const {
-    if (!path_override_.empty()) return path_override_;
-    return (fs::path(homeDir()) / ".hms-claude-mem" / "store" / (namespace_ + ".db")).string();
+    return pathFor(namespace_, path_override_);
 }
 
 void EmbeddedStore::ensureLoaded() {
@@ -143,7 +156,8 @@ void EmbeddedStore::loadFromDisk() {
         if (std::memcmp(r.p, kMagic, 4) != 0) throw std::runtime_error("bad magic");
         r.p += 4;
         uint32_t ver = r.u32();
-        if (ver != kVersion) throw std::runtime_error("unsupported version");
+        if (ver != kVersion && ver != kVersionFields)
+            throw std::runtime_error("unsupported version");
         uint32_t count = r.u32();
         for (uint32_t i = 0; i < count; ++i) {
             Record rec;
@@ -154,6 +168,13 @@ void EmbeddedStore::loadFromDisk() {
             rec.meta.updated_at = r.str();
             rec.meta.pinned = r.u8() != 0;
             rec.vec = r.vec();
+            if (ver == kVersionFields) {
+                uint32_t nf = r.u32();
+                for (uint32_t j = 0; j < nf; ++j) {
+                    std::string f = r.str();
+                    rec.meta.fields[f] = r.str();
+                }
+            }
             records_[rec.meta.key] = std::move(rec);
         }
         logErr("loaded " + std::to_string(records_.size()) + " memories from " + path_);
@@ -164,9 +185,11 @@ void EmbeddedStore::loadFromDisk() {
 }
 
 std::vector<char> EmbeddedStore::serializeLocked() const {
+    bool with_fields = std::any_of(records_.begin(), records_.end(),
+                                   [](const auto& kv) { return !kv.second.meta.fields.empty(); });
     std::vector<char> b;
     b.insert(b.end(), kMagic, kMagic + 4);
-    putU32(b, kVersion);
+    putU32(b, with_fields ? kVersionFields : kVersion);
     putU32(b, (uint32_t)records_.size());
     for (const auto& [key, rec] : records_) {
         putStr(b, rec.meta.key);
@@ -176,6 +199,13 @@ std::vector<char> EmbeddedStore::serializeLocked() const {
         putStr(b, rec.meta.updated_at);
         putU8(b, rec.meta.pinned ? 1 : 0);
         putVec(b, rec.vec);
+        if (with_fields) {
+            putU32(b, (uint32_t)rec.meta.fields.size());
+            for (const auto& [f, v] : rec.meta.fields) {
+                putStr(b, f);
+                putStr(b, v);
+            }
+        }
     }
     return b;
 }
@@ -265,7 +295,8 @@ bool EmbeddedStore::vectorRemove(const std::string& key) {
     auto it = records_.find(key);
     if (it != records_.end()) {
         it->second.vec.clear();
-        if (it->second.meta.value.empty() && it->second.meta.category.empty())
+        if (it->second.meta.value.empty() && it->second.meta.category.empty() &&
+            it->second.meta.fields.empty())
             records_.erase(it);
         markDirtyLocked();
     }

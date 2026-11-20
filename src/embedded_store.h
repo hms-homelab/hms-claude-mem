@@ -44,6 +44,12 @@ public:
     // Force a synchronous flush of pending changes (signal handler / shutdown).
     void flushNow();
 
+    // The file a store for `ns` uses (STORE_PATH override, else the default).
+    static std::string pathFor(const std::string& ns, const std::string& path_override);
+    // SDD-004: the recipe pool's file, recipes.db beside the namespace file.
+    static std::string recipesPathBeside(const std::string& ns,
+                                         const std::string& path_override);
+
 private:
     struct Record { MemoryEntry meta; std::vector<float> vec; };
 

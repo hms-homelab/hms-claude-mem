@@ -1,4 +1,5 @@
 #pragma once
+#include <map>
 #include <string>
 #include <vector>
 #include <optional>
@@ -12,6 +13,10 @@ struct MemoryEntry {
     std::string created_at;
     std::string updated_at;
     bool pinned = false;
+    // Record mode (SDD-004 recipes): when non-empty, the entry is stored as
+    // created_at + updated_at + exactly these fields, one hash field each, and
+    // value/category/pinned are not written. Memories never set it.
+    std::map<std::string, std::string> fields;
 };
 
 struct SearchResult {

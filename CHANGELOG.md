@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### 3.0.0
+
+#### Added
+- **Recipes** (SDD-004): named, ready-to-run scripts shared by every session,
+  served beside the memories by the same JSON-RPC handler. New tools
+  `recipe_create`, `recipe_update`, `recipe_delete`, `recipe_get`,
+  `recipe_search`. A recipe carries `name` (kebab-case key), `description`,
+  `language`, `script` (max 64 KB, `{{param}}` placeholders), `runs_on`,
+  `mutates` (must be given), and optional `params`, `prereqs`, `tags`, plus
+  `verified_at` (stamped by `recipe_update` with `verified: true`) and
+  `created_at`/`updated_at`. `recipe_update` changes only the fields given and
+  can rename with `new_name`.
+- `recipe_search`: `name` is an exact match; filters alone (`tag`, `language`,
+  `runs_on`, `mutates`) return every recipe matching all of them, by name;
+  `query` is semantic, then the filters. Results leave the script out.
+- **Secret guard** (D3): `recipe_create` and `recipe_update` refuse a script,
+  prereq or param that looks like it holds a secret (well-known key prefixes,
+  PEM private key blocks, a long opaque literal assigned to a
+  password/secret/token/key name). The refusal names the field and line and
+  never repeats the value. `$VAR`, `${VAR}` and `{{param}}` pass.
+- The tool descriptions carry the recipe rules: no secrets, `mutates: true`
+  still needs the user's go before running, search before writing a script,
+  fix a broken recipe in place.
+- Recipes are a separate pool: Redis `claude:recipe:vectors` +
+  `claude:recipe:data:<name>` whatever the `NAMESPACE`; embedded store
+  `recipes.db` beside the namespace file. `mem_*` tools never see recipes and
+  `recipe_*` tools never see memories. The embedded text is
+  `<language>: <name>. <description> [tags]`; only a change of name,
+  description or tags re-embeds.
+
+#### Changed
+- The embedded store file format gains version 2 (records with fields), used
+  only by `recipes.db`. Memory files are still written as version 1.
+- The daemon refuses to start (exit 2) when the memory store file would be the
+  recipe pool's file (`NAMESPACE=recipes` with no `STORE_PATH`, or a
+  `STORE_PATH` named `recipes.db`).
+
 ## [2.0.1] - 2026-10-12
 
 ### Fixed

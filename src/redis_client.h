@@ -7,8 +7,12 @@
 
 class RedisClient : public IMemoryStore {
 public:
+    // key_prefix overrides the default "claude:mem:<ns>:" key prefix. The
+    // recipe pool (SDD-004) runs a second client with "claude:recipe:", so it
+    // is shared whatever NAMESPACE the server runs with.
     RedisClient(const std::string& host = "127.0.0.1", int port = 6379,
-                const std::string& ns = "default");
+                const std::string& ns = "default",
+                const std::string& key_prefix = "");
     ~RedisClient() override;
 
     // Single connection attempt. Returns true on success.
@@ -56,6 +60,7 @@ private:
     std::string host_;
     int port_;
     std::string namespace_;
+    std::string key_prefix_; // "claude:mem:<ns>:" unless overridden
     void* ctx_; // redisContext*, guarded by mutex_
     int max_retries_; // backoff attempts before giving up (>= 10)
 };

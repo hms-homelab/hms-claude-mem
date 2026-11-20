@@ -3,7 +3,7 @@
 **Status:** Accepted 2026-11-20
 **Author:** Albin + Claude
 **Date:** 2026-11-20
-**Target version:** 2.1.0 (new tools, existing tools unchanged)
+**Target version:** 3.0.0 (new tools, existing tools unchanged)
 
 ## 1. Problem / Motivation
 

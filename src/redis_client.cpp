@@ -22,8 +22,11 @@ int envInt(const char* name, int fallback) {
 }
 } // namespace
 
-RedisClient::RedisClient(const std::string& host, int port, const std::string& ns)
-    : host_(host), port_(port), namespace_(ns), ctx_(nullptr) {
+RedisClient::RedisClient(const std::string& host, int port, const std::string& ns,
+                         const std::string& key_prefix)
+    : host_(host), port_(port), namespace_(ns),
+      key_prefix_(key_prefix.empty() ? "claude:mem:" + ns + ":" : key_prefix),
+      ctx_(nullptr) {
     // At least 10 attempts before giving up (configurable, never lower).
     max_retries_ = std::max(10, envInt("REDIS_MAX_RETRIES", 10));
 }
@@ -35,15 +38,15 @@ RedisClient::~RedisClient() {
 }
 
 std::string RedisClient::vectorKey() const {
-    return "claude:mem:" + namespace_ + ":vectors";
+    return key_prefix_ + "vectors";
 }
 
 std::string RedisClient::dataKey(const std::string& key) const {
-    return "claude:mem:" + namespace_ + ":data:" + key;
+    return key_prefix_ + "data:" + key;
 }
 
 std::string RedisClient::dataPrefix() const {
-    return "claude:mem:" + namespace_ + ":data:";
+    return key_prefix_ + "data:";
 }
 
 bool RedisClient::connectUnlocked() {
@@ -236,6 +239,35 @@ bool RedisClient::hashSet(const std::string& key, const MemoryEntry& entry) {
     std::string hkey = dataKey(key);
     std::string pinned_str = entry.pinned ? "1" : "0";
 
+    if (!entry.fields.empty()) {
+        // Record mode: one hash field per record field. Argv, not a format
+        // string, so values (scripts) are passed byte for byte.
+        std::vector<std::string> args = {"HSET", hkey,
+                                         "created_at", entry.created_at,
+                                         "updated_at", entry.updated_at};
+        for (const auto& [f, v] : entry.fields) {
+            args.push_back(f);
+            args.push_back(v);
+        }
+        std::vector<const char*> argv;
+        std::vector<size_t> argvlen;
+        for (const auto& a : args) {
+            argv.push_back(a.data());
+            argvlen.push_back(a.size());
+        }
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            if (!ensureConnected()) return false;
+            auto* c = static_cast<redisContext*>(ctx_);
+            auto* reply = static_cast<redisReply*>(redisCommandArgv(
+                c, static_cast<int>(argv.size()), argv.data(), argvlen.data()));
+            if (!reply) { dropConnection(); continue; }
+            bool ok = (reply->type != REDIS_REPLY_ERROR);
+            freeReplyObject(reply);
+            return ok;
+        }
+        return false;
+    }
+
     for (int attempt = 0; attempt < 2; ++attempt) {
         if (!ensureConnected()) return false;
         auto* c = static_cast<redisContext*>(ctx_);
@@ -276,6 +308,7 @@ std::optional<MemoryEntry> RedisClient::hashGet(const std::string& key) {
         else if (field == "created_at") entry.created_at = val;
         else if (field == "updated_at") entry.updated_at = val;
         else if (field == "pinned") entry.pinned = (val == "1");
+        else entry.fields[field] = val; // record-mode fields
     }
 
     freeReplyObject(reply);

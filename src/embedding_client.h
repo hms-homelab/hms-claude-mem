@@ -18,9 +18,10 @@ public:
                     EmbedProvider provider = EmbedProvider::Ollama,
                     const std::string& api_key = "",
                     const std::string& local_model_path = "");
-    ~EmbeddingClient();
+    virtual ~EmbeddingClient();
 
-    std::vector<float> embed(const std::string& text);
+    // Virtual so tests can count calls and run offline with a stand-in.
+    virtual std::vector<float> embed(const std::string& text);
     bool isHealthy();
 
 private:

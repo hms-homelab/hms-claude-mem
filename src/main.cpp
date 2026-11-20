@@ -5,6 +5,7 @@
 #include "embedded_store.h"
 #include "embedding_client.h"
 #include "tools.h"
+#include "recipe_tools.h"
 #include <csignal>
 #include <iostream>
 #include <cstdlib>
@@ -72,18 +73,33 @@ int main() {
     // embed model here. The MCP initialize handshake must return instantly,
     // otherwise a cold load or slow round-trip can blow Claude Code's startup
     // timeout. The first actual tool call establishes the backend + embed.
+    // SDD-004: recipes are a second, fixed pool beside the memory namespace, a
+    // second store instance of the same provider (claude:recipe: in Redis,
+    // recipes.db beside the namespace file in the embedded store).
     std::unique_ptr<IMemoryStore> store;
+    std::unique_ptr<IMemoryStore> recipe_store;
     if (store_provider == "local") {
+        const std::string mem_path = EmbeddedStore::pathFor(ns, store_path);
+        const std::string recipe_path = EmbeddedStore::recipesPathBeside(ns, store_path);
+        if (mem_path == recipe_path) {
+            std::cerr << "hms_claude_mem: the memory store file " << mem_path
+                      << " is the recipe pool's file. Pick another NAMESPACE or STORE_PATH."
+                      << std::endl;
+            return 2;
+        }
         store = std::make_unique<EmbeddedStore>(ns, store_path);
+        recipe_store = std::make_unique<EmbeddedStore>("recipes", recipe_path);
     } else {
         store = std::make_unique<RedisClient>(redis_host, redis_port, ns);
+        recipe_store = std::make_unique<RedisClient>(redis_host, redis_port, ns, "claude:recipe:");
     }
 
     installShutdownSignals();
 
     EmbeddingClient embedder(embed_host, embed_model, provider, embed_api_key, local_model_path);
     MemoryTools tools(*store, embedder, decay_rate);
-    McpServer server(tools);
+    RecipeTools recipes(*recipe_store, embedder);
+    McpServer server(tools, &recipes);
 
     // SDD-003 stage 9: stdio is gone, HTTP is the only transport. MODE is still
     // read so an old stdio config fails loudly instead of silently listening.

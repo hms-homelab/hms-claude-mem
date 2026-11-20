@@ -1,7 +1,42 @@
 #include "mcp_server.h"
 #include <string>
 
-McpServer::McpServer(MemoryTools& tools) : tools_(tools) {}
+McpServer::McpServer(MemoryTools& tools, RecipeTools* recipes)
+    : tools_(tools), recipes_(recipes) {}
+
+namespace {
+// SDD-004 section 4.1, carried in the tool descriptions so every session
+// reads them before it writes or runs a recipe.
+const char* const kRecipeRules =
+    " Rules: a recipe never holds a secret value; it names the secrets file and "
+    "variable it reads (source ~/.secrets; $SERVICE_TOKEN), and the server refuses "
+    "a script, prereqs or params that look like they hold one. mutates:true changes "
+    "nothing about permission: ask the user before running it, as for any action "
+    "that changes data or a live system. A broken recipe is fixed in place with "
+    "recipe_update once the fix is proven, never copied.";
+
+json recipeFieldProps() {
+    return {
+        {"description", {{"type", "string"}, {"description", "One or two sentences: what it does and when to use it. Embedded for search."}}},
+        {"language", {{"type", "string"}, {"description", "bash, zsh, sql, python, powershell, js, ..."}}},
+        {"script", {{"type", "string"}, {"description", "The script, runnable as is once {{param}} placeholders are filled. Max 64 KB. No secret values."}}},
+        {"runs_on", {{"type", "array"}, {"items", {{"type", "string"}}},
+                     {"description", "Host labels where it runs: mac, hub, vps, windows, docker, any"}}},
+        {"mutates", {{"type", "boolean"}, {"description", "true if it changes data or a live system (write SQL, deploy, delete, restart). Never assumed: say it."}}},
+        {"params", {{"type", "array"},
+                    {"items", {{"type", "object"},
+                               {"properties", {{"name", {{"type", "string"}}},
+                                               {"description", {{"type", "string"}}},
+                                               {"example", {{"type", "string"}}}}},
+                               {"required", {"name"}}}},
+                    {"description", "Parameters; the script refers to each as {{name}}"}}},
+        {"prereqs", {{"type", "array"}, {"items", {{"type", "string"}}},
+                     {"description", "What must be true first: tools installed, a secrets file sourced (variable NAME, never value), a tunnel up"}}},
+        {"tags", {{"type", "array"}, {"items", {{"type", "string"}}},
+                  {"description", "Free labels for exact filtering"}}},
+    };
+}
+} // namespace
 
 json McpServer::makeResponse(const json& id, const json& result) {
     return {{"jsonrpc", "2.0"}, {"id", id}, {"result", result}};
@@ -97,6 +132,70 @@ json McpServer::handleToolsList(const json& request) {
         }
     });
 
+    if (recipes_) {
+        const std::string rules = kRecipeRules;
+        json name_prop = {{"type", "string"}, {"description", "Unique kebab-case name, e.g. ingest-nights-for-user"}};
+
+        json create_props = recipeFieldProps();
+        create_props["name"] = name_prop;
+        tools.push_back({
+            {"name", "recipe_create"},
+            {"description", "Store a recipe: a named, ready-to-run script shared by every session. "
+                            "Before writing a script, recipe_search for it; after writing one that worked "
+                            "and will be needed again, recipe_create it. Refuses an existing name (use "
+                            "recipe_update) and a script over 64 KB." + rules},
+            {"inputSchema", {{"type", "object"}, {"properties", create_props},
+                             {"required", {"name", "description", "language", "script", "runs_on", "mutates"}}}}
+        });
+
+        json update_props = recipeFieldProps();
+        update_props["name"] = {{"type", "string"}, {"description", "Exact name of the recipe to change"}};
+        update_props["new_name"] = {{"type", "string"}, {"description", "Rename the recipe to this kebab-case name"}};
+        update_props["verified"] = {{"type", "boolean"}, {"description", "true stamps verified_at with today: the recipe was just confirmed working"}};
+        tools.push_back({
+            {"name", "recipe_update"},
+            {"description", "Change a recipe: only the fields given change. verified:true stamps verified_at "
+                            "with today. Refuses a name that does not exist (use recipe_create). Use it to fix "
+                            "a broken recipe in place once the fix is proven." + rules},
+            {"inputSchema", {{"type", "object"}, {"properties", update_props}, {"required", {"name"}}}}
+        });
+
+        tools.push_back({
+            {"name", "recipe_delete"},
+            {"description", "Delete a recipe by exact name."},
+            {"inputSchema", {{"type", "object"},
+                             {"properties", {{"name", {{"type", "string"}, {"description", "Exact recipe name"}}}}},
+                             {"required", {"name"}}}}
+        });
+
+        tools.push_back({
+            {"name", "recipe_get"},
+            {"description", "Get a whole recipe, script included, by exact name." + rules},
+            {"inputSchema", {{"type", "object"},
+                             {"properties", {{"name", {{"type", "string"}, {"description", "Exact recipe name"}}}}},
+                             {"required", {"name"}}}}
+        });
+
+        tools.push_back({
+            {"name", "recipe_search"},
+            {"description", "Find recipes. Search here before writing a script. With name: exact match, "
+                            "same as recipe_get. With only filters (tag, language, runs_on, mutates): every "
+                            "recipe matching all of them, by name. With query: semantic search, then the "
+                            "filters. Results carry name, description, language, runs_on, mutates, "
+                            "verified_at; fetch the script with recipe_get." + rules},
+            {"inputSchema", {{"type", "object"},
+                             {"properties", {
+                                 {"query", {{"type", "string"}, {"description", "Natural language: what the script should do"}}},
+                                 {"name", {{"type", "string"}, {"description", "Exact recipe name"}}},
+                                 {"tag", {{"type", "string"}, {"description", "Only recipes with this tag"}}},
+                                 {"language", {{"type", "string"}, {"description", "Only recipes in this language"}}},
+                                 {"runs_on", {{"type", "string"}, {"description", "Only recipes that list this host label"}}},
+                                 {"mutates", {{"type", "boolean"}, {"description", "Only recipes whose mutates flag equals this"}}},
+                                 {"top_k", {{"type", "integer"}, {"description", "Max semantic results (default 5)"}, {"default", 5}}}
+                             }}}}
+        });
+    }
+
     return makeResponse(request["id"], {{"tools", tools}});
 }
 
@@ -128,6 +227,22 @@ json McpServer::handleToolsCall(const json& request) {
         std::string category = args.value("category", "");
         int limit = args.value("limit", 20);
         result = tools_.list(category, limit);
+    } else if (recipes_ && name.rfind("recipe_", 0) == 0) {
+        if (!args.is_object()) {
+            result = {{"error", "arguments must be an object"}};
+        } else if (name == "recipe_create") {
+            result = recipes_->create(args);
+        } else if (name == "recipe_update") {
+            result = recipes_->update(args);
+        } else if (name == "recipe_delete") {
+            result = recipes_->remove(args);
+        } else if (name == "recipe_get") {
+            result = recipes_->get(args);
+        } else if (name == "recipe_search") {
+            result = recipes_->search(args);
+        } else {
+            return makeError(request["id"], -32601, "Unknown tool: " + name);
+        }
     } else {
         return makeError(request["id"], -32601, "Unknown tool: " + name);
     }
