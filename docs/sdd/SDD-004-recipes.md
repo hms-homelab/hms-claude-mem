@@ -160,26 +160,29 @@ A pinned memory and the project CLAUDE.md line: "Before writing a script,
 `recipe_search` for it. After writing one that worked and will be needed again,
 `recipe_create` it."
 
-## 9. Open decisions
+## 9. Decisions
 
-- **D1. Tool names.** `recipe_*` as above, or one `recipe` tool with an
-  `action`. Recommendation: separate tools, like `mem_*`.
-- **D2. Who may delete.** Any session, or only on Albin's word. Recommendation:
-  any session may update; delete only when Albin asks (a deleted recipe is
-  gone for every session).
-- **D3. Secret guard.** Rely on the rule alone, or have the server refuse a
-  script containing what looks like a token (well-known key prefixes, long
-  base64 after `password=`/`token=`). Recommendation: the server refuses; the
-  pool is shared everywhere, so one leaked value reaches every session.
-- **D4. History.** Keep the previous script on update, or not. Recommendation:
-  not now; the description and `verified_at` say enough, and a bad update is
-  fixed by another update.
-- **D5. Seed list.** Albin approves the list of scripts to move in before the
-  seeding starts.
-- **D6. Server down.** Accept that recipes are unreachable while the server is
-  down (memories already are), or keep a local copy (e.g. the file memory keeps
-  the script beside the pointer). Recommendation: accept it; one place to fix a
-  recipe matters more, and a second copy goes stale.
+Taken by Albin on 2026-11-20 unless marked open.
+
+- **D1. Tool names.** Separate tools, `recipe_create`, `recipe_update`,
+  `recipe_delete`, `recipe_get`, `recipe_search`, like `mem_*` (Albin's own
+  list: create, modify, delete, search by exact match and by vector).
+- **D2. Who may delete.** Any session may delete a recipe, as it may create or
+  update one.
+- **D3. Secret guard.** The server refuses a `recipe_create` or
+  `recipe_update` whose script, prereqs or params look like they hold a secret:
+  well-known key prefixes (cloud, GitHub, Stripe, Slack, OpenAI and Anthropic
+  style keys, PEM private key blocks) and a long opaque value assigned to a
+  name containing `password`, `secret`, `token` or `key`. The refusal names the
+  line, never echoes the value, and says to read it from a secrets file
+  instead. A reference such as `$SERVICE_TOKEN` or `${API_KEY}` passes.
+- **D4. History.** None. A bad update is fixed by another update;
+  `verified_at` shows when the recipe last worked.
+- **D5. Seed list.** Open: Albin approves the list of scripts to move in before
+  the seeding starts.
+- **D6. Server down.** Accepted: recipes are unreachable while the server is
+  down, as memories are. One place to fix a recipe; no second copy to go
+  stale.
 
 ## 10. Testing
 
