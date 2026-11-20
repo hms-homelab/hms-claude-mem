@@ -1,6 +1,6 @@
 # SDD-004: Recipes, ready-to-run scripts shared by every session
 
-**Status:** Draft
+**Status:** Accepted 2026-11-20
 **Author:** Albin + Claude
 **Date:** 2026-11-20
 **Target version:** 2.1.0 (new tools, existing tools unchanged)
@@ -178,7 +178,7 @@ Taken by Albin on 2026-11-20 unless marked open.
   instead. A reference such as `$SERVICE_TOKEN` or `${API_KEY}` passes.
 - **D4. History.** None. A bad update is fixed by another update;
   `verified_at` shows when the recipe last worked.
-- **D5. Seed list.** Open: Albin approves the list of scripts to move in before
+- **D5. Seed list.** Albin approves the list of scripts to move in before
   the seeding starts.
 - **D6. Server down.** Accepted: recipes are unreachable while the server is
   down, as memories are. One place to fix a recipe; no second copy to go
